@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  Pressable,
   TouchableOpacity,
   View
 } from "react-native";
@@ -29,7 +30,7 @@ type LiveMarker = {
 
 const CAMPUS_CENTER_LATITUDE = 44.9802;
 const CAMPUS_CENTER_LONGITUDE = -93.2362;
-const CAMPUS_RADIUS_METERS = 2000;
+const CAMPUS_RADIUS_METERS = 1750;
 const SEARCH_RADIUS_MILES = 3;
 const SEARCH_RADIUS_METERS = SEARCH_RADIUS_MILES * 1609.34;
 const MAP_MIN_ZOOM = 13;
@@ -174,6 +175,7 @@ function buildMapHtml(googleMapsApiKey: string): string {
           zoom: ${MAP_INITIAL_ZOOM},
           minZoom: ${MAP_MIN_ZOOM},
           maxZoom: ${MAP_MAX_ZOOM},
+          zoomControl: false,
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
@@ -256,6 +258,30 @@ function buildMapHtml(googleMapsApiKey: string): string {
           clickable: false,
           map: map
         });
+
+        window.mapControl = {
+          zoomIn: function() {
+            map.setZoom(Math.min(map.getZoom() + 1, ${MAP_MAX_ZOOM}));
+          },
+          zoomOut: function() {
+            map.setZoom(Math.max(map.getZoom() - 1, ${MAP_MIN_ZOOM}));
+          },
+          panUp: function() {
+            map.panBy(0, -120);
+          },
+          panDown: function() {
+            map.panBy(0, 120);
+          },
+          panLeft: function() {
+            map.panBy(-120, 0);
+          },
+          panRight: function() {
+            map.panBy(120, 0);
+          },
+          recenter: function() {
+            map.panTo(center);
+          }
+        };
       }
       window.onload = initializeMap;
     </script>
@@ -274,6 +300,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [isAddingMarker, setIsAddingMarker] = useState(false);
   const [isMapFullScreen, setIsMapFullScreen] = useState(false);
   const [isManualMarkerModalVisible, setIsManualMarkerModalVisible] = useState(false);
+  const [isMapControlsExpanded, setIsMapControlsExpanded] = useState(false);
   const [localSearchMessage, setLocalSearchMessage] = useState("");
   const [didYouMeanSuggestions, setDidYouMeanSuggestions] = useState<PlaceSuggestion[]>([]);
   const [tapMarkerNameInput, setTapMarkerNameInput] = useState("");
@@ -288,6 +315,16 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const handleOpenMarkerAddress = useCallback(async (marker: LiveMarker) => {
     const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${marker.lat},${marker.lng}`;
     await Linking.openURL(mapsUrl);
+  }, []);
+
+  const handleMapControl = useCallback((action: string) => {
+    const safeAction = action.replace(/[^a-zA-Z]/g, "");
+    mapWebViewRef.current?.injectJavaScript(`
+      if (window.mapControl && window.mapControl.${safeAction}) {
+        window.mapControl.${safeAction}();
+      }
+      true;
+    `);
   }, []);
 
   const handleMapMessage = useCallback((event: WebViewMessageEvent) => {
@@ -442,8 +479,8 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           domStorageEnabled
           onMessage={handleMapMessage}
         />
-        <TouchableOpacity
-          style={styles.leftMarkerButton}
+        <Pressable
+          style={({ pressed }) => [styles.leftMarkerButton, pressed && styles.controlButtonPressed]}
           onPress={() => {
             setLocalSearchMessage("");
             setDidYouMeanSuggestions([]);
@@ -451,7 +488,69 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           }}
         >
           <Text style={styles.leftMarkerButtonText}>+</Text>
-        </TouchableOpacity>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.leftControlsToggleButton, pressed && styles.controlButtonPressed]}
+          onPress={() => setIsMapControlsExpanded((prev) => !prev)}
+        >
+          <Text style={styles.leftControlsToggleButtonText}>
+            {isMapControlsExpanded ? "×" : "◎"}
+          </Text>
+        </Pressable>
+        {isMapControlsExpanded ? (
+          <View style={styles.leftControlsPanel}>
+            <View style={styles.leftControlsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("zoomIn")}
+              >
+                <Text style={styles.leftControlButtonText}>+</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("zoomOut")}
+              >
+                <Text style={styles.leftControlButtonText}>-</Text>
+              </Pressable>
+            </View>
+            <View style={styles.leftControlsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("panUp")}
+              >
+                <Text style={styles.leftControlButtonText}>↑</Text>
+              </Pressable>
+            </View>
+            <View style={styles.leftControlsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("panLeft")}
+              >
+                <Text style={styles.leftControlButtonText}>←</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("recenter")}
+              >
+                <Text style={styles.leftControlButtonText}>◎</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("panRight")}
+              >
+                <Text style={styles.leftControlButtonText}>→</Text>
+              </Pressable>
+            </View>
+            <View style={styles.leftControlsRow}>
+              <Pressable
+                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+                onPress={() => handleMapControl("panDown")}
+              >
+                <Text style={styles.leftControlButtonText}>↓</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         {isMapFullScreen ? (
           <TouchableOpacity
             style={styles.fullScreenExitButton}
@@ -646,28 +745,78 @@ const styles = StyleSheet.create({
   },
   leftMarkerButton: {
     position: "absolute",
-    left: 12,
+    right: 12,
     top: "45%",
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
     borderRadius: 999,
-    borderWidth: 2,
-    borderColor: "#000000",
-    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "#1c1c1e",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#ffffff",
-    shadowOpacity: 0.25,
-    shadowRadius: 18,
+    shadowColor: "#000000",
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 8
+    elevation: 4
   },
   leftMarkerButtonText: {
-    color: "#000000",
+    color: "#ffffff",
     fontSize: 16,
     fontWeight: "700",
     textAlign: "center",
     lineHeight: 18
+  },
+  leftControlsToggleButton: {
+    position: "absolute",
+    left: 12,
+    top: "45%",
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "#1c1c1e",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  leftControlsToggleButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 16
+  },
+  leftControlsPanel: {
+    position: "absolute",
+    left: 12,
+    top: "45%",
+    marginTop: -166,
+    gap: 6
+  },
+  leftControlsRow: {
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "center"
+  },
+  leftControlButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "#1c1c1e",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  leftControlButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 16
+  },
+  controlButtonPressed: {
+    backgroundColor: "#2c2c2e"
   },
   mapContainerFullScreen: {
     borderTopLeftRadius: 0,
