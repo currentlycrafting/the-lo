@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -198,15 +199,19 @@ function buildMapHtml(googleMapsApiKey: string): string {
           title: "Dinkytown Center"
         });
 
-        function postMarkerToApp(marker) {
+        function postToApp(type, payload) {
           if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
             window.ReactNativeWebView.postMessage(
               JSON.stringify({
-                type: "marker_added",
-                payload: marker
+                type: type,
+                payload: payload
               })
             );
           }
+        }
+
+        function postMarkerToApp(marker) {
+          postToApp("marker_added", marker);
         }
 
         function addUserMarker(markerData, shouldPost) {
@@ -225,9 +230,6 @@ function buildMapHtml(googleMapsApiKey: string): string {
         };
 
         map.addListener("click", function(event) {
-          const rawName = window.prompt("Name this marker", "");
-          if (rawName === null) return;
-          const markerName = (rawName.trim() || "UNTITLED").toUpperCase();
           const lat = event.latLng.lat();
           const lng = event.latLng.lng();
 
@@ -237,13 +239,11 @@ function buildMapHtml(googleMapsApiKey: string): string {
               address = results[0].formatted_address;
             }
 
-            addUserMarker({
-              id: "marker_" + Date.now() + "_" + Math.floor(Math.random() * 100000),
-              name: markerName,
-              address: address,
+            postToApp("map_tapped_candidate", {
               lat: lat,
-              lng: lng
-            }, true);
+              lng: lng,
+              address: address
+            });
           });
         });
 
@@ -275,6 +275,12 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [isMapFullScreen, setIsMapFullScreen] = useState(false);
   const [localSearchMessage, setLocalSearchMessage] = useState("");
   const [didYouMeanSuggestions, setDidYouMeanSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [tapMarkerNameInput, setTapMarkerNameInput] = useState("");
+  const [pendingMapTapMarker, setPendingMapTapMarker] = useState<{
+    lat: number;
+    lng: number;
+    address: string;
+  } | null>(null);
   const mapWebViewRef = useRef<WebView>(null);
   const mapHtml = buildMapHtml(googleMapsApiKey);
 
@@ -286,12 +292,23 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const handleMapMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const message = JSON.parse(event.nativeEvent.data);
-      if (message?.type !== "marker_added" || !message.payload) return;
+      if (message?.type === "marker_added" && message.payload) {
+        const payload = message.payload as LiveMarker;
+        if (!payload.id || !payload.name) return;
+        setLiveMarkers((prev) => [payload, ...prev]);
+        return;
+      }
 
-      const payload = message.payload as LiveMarker;
-      if (!payload.id || !payload.name) return;
-
-      setLiveMarkers((prev) => [payload, ...prev]);
+      if (message?.type === "map_tapped_candidate" && message.payload) {
+        const payload = message.payload as { lat: number; lng: number; address: string };
+        if (typeof payload.lat !== "number" || typeof payload.lng !== "number") return;
+        setPendingMapTapMarker({
+          lat: payload.lat,
+          lng: payload.lng,
+          address: payload.address || "Address unavailable"
+        });
+        setTapMarkerNameInput("");
+      }
     } catch {
       // Ignore malformed bridge messages from the webview.
     }
@@ -374,6 +391,26 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     setNewMarkerName("");
     setNewMarkerAddress("");
   }, [addMarkerToListAndMap, newMarkerName]);
+
+  const handleCancelTapMarkerModal = useCallback(() => {
+    setPendingMapTapMarker(null);
+    setTapMarkerNameInput("");
+  }, []);
+
+  const handleConfirmTapMarkerModal = useCallback(() => {
+    if (!pendingMapTapMarker) return;
+
+    const marker: LiveMarker = {
+      id: `marker_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+      name: (tapMarkerNameInput.trim() || "UNTITLED").toUpperCase(),
+      address: pendingMapTapMarker.address,
+      lat: pendingMapTapMarker.lat,
+      lng: pendingMapTapMarker.lng
+    };
+
+    addMarkerToListAndMap(marker);
+    handleCancelTapMarkerModal();
+  }, [addMarkerToListAndMap, handleCancelTapMarkerModal, pendingMapTapMarker, tapMarkerNameInput]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -489,6 +526,45 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
         </ScrollView>
         </View>
       ) : null}
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={Boolean(pendingMapTapMarker)}
+        onRequestClose={handleCancelTapMarkerModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>NAME THIS MARKER</Text>
+            <Text style={styles.modalAddress} numberOfLines={2}>
+              {pendingMapTapMarker?.address}
+            </Text>
+            <TextInput
+              value={tapMarkerNameInput}
+              onChangeText={setTapMarkerNameInput}
+              style={styles.modalInput}
+              placeholder="ENTER MARKER NAME"
+              placeholderTextColor="#6b7280"
+              autoCapitalize="characters"
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={handleCancelTapMarkerModal}
+              >
+                <Text style={styles.modalCancelButtonText}>CANCEL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalConfirmButton}
+                onPress={handleConfirmTapMarkerModal}
+              >
+                <Text style={styles.modalConfirmButtonText}>ADD MARKER</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -657,5 +733,80 @@ const styles = StyleSheet.create({
   cardAddressLink: {
     color: "white",
     textDecorationLine: "underline",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(5,5,5,0.82)",
+    justifyContent: "center",
+    paddingHorizontal: 20
+  },
+  modalCard: {
+    backgroundColor: "#0a0a0a",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    padding: 16
+  },
+  modalTitle: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 1.6,
+    marginBottom: 8
+  },
+  modalAddress: {
+    color: "#6b7280",
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.4,
+    marginBottom: 10
+  },
+  modalInput: {
+    height: 42,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#1c1c1e",
+    color: "#ffffff",
+    paddingHorizontal: 14,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.8
+  },
+  modalActions: {
+    marginTop: 12,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8
+  },
+  modalCancelButton: {
+    height: 36,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "#1c1c1e",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 14
+  },
+  modalCancelButtonText: {
+    color: "#9ca3af",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2
+  },
+  modalConfirmButton: {
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 14
+  },
+  modalConfirmButtonText: {
+    color: "#000000",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2
   },
 });
