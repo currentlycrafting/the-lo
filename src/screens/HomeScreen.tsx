@@ -6,8 +6,8 @@ type HomeScreenProps = {
   googleMapsApiKey: string;
 };
 
-const CAMPUS_CENTER_LATITUDE = 44.97399;
-const CAMPUS_CENTER_LONGITUDE = -93.227728;
+const CAMPUS_CENTER_LATITUDE = 44.9802;
+const CAMPUS_CENTER_LONGITUDE = -93.2362;
 const CAMPUS_RADIUS_METERS = 2000;
 const MAP_MIN_ZOOM = 13;
 const MAP_MAX_ZOOM = 17;
@@ -58,6 +58,12 @@ function buildMapHtml(googleMapsApiKey: string): string {
             { featureType: "water", elementType: "geometry", stylers: [{ color: "#0b0d11" }] }
           ],
           restriction: { latLngBounds: allowedBounds, strictBounds: true }
+        });
+
+        new google.maps.Marker({
+          position: center,
+          map: map,
+          title: "Dinkytown Center"
         });
 
         new google.maps.Rectangle({
@@ -135,7 +141,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   headerButton: {
-    backgroundColor: "#1c1c1e",
+    backgroundColor: "black",
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
