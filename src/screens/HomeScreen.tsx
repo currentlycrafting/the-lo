@@ -273,6 +273,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [newMarkerAddress, setNewMarkerAddress] = useState("");
   const [isAddingMarker, setIsAddingMarker] = useState(false);
   const [isMapFullScreen, setIsMapFullScreen] = useState(false);
+  const [isManualMarkerModalVisible, setIsManualMarkerModalVisible] = useState(false);
   const [localSearchMessage, setLocalSearchMessage] = useState("");
   const [didYouMeanSuggestions, setDidYouMeanSuggestions] = useState<PlaceSuggestion[]>([]);
   const [tapMarkerNameInput, setTapMarkerNameInput] = useState("");
@@ -369,6 +370,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
 
       setNewMarkerName("");
       setNewMarkerAddress("");
+      setIsManualMarkerModalVisible(false);
       Alert.alert("Marker Added", `${marker.name} added near Dinkytown.`);
     } finally {
       setIsAddingMarker(false);
@@ -440,6 +442,16 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           domStorageEnabled
           onMessage={handleMapMessage}
         />
+        <TouchableOpacity
+          style={styles.leftMarkerButton}
+          onPress={() => {
+            setLocalSearchMessage("");
+            setDidYouMeanSuggestions([]);
+            setIsManualMarkerModalVisible(true);
+          }}
+        >
+          <Text style={styles.leftMarkerButtonText}>+</Text>
+        </TouchableOpacity>
         {isMapFullScreen ? (
           <TouchableOpacity
             style={styles.fullScreenExitButton}
@@ -453,56 +465,6 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       {!isMapFullScreen ? (
         <View style={styles.sheet}>
         <Text style={styles.sectionLabel}>LIVE SIGNALS</Text>
-        <View style={styles.addMarkerContainer}>
-          <TextInput
-            value={newMarkerName}
-            onChangeText={setNewMarkerName}
-            style={styles.markerInput}
-            placeholder="MARKER NAME"
-            placeholderTextColor="#6b7280"
-            autoCapitalize="characters"
-          />
-          <TextInput
-            value={newMarkerAddress}
-            onChangeText={setNewMarkerAddress}
-            style={styles.markerInput}
-            placeholder="PLACE OR ADDRESS (E.G. TATE HALL)"
-            placeholderTextColor="#6b7280"
-            autoCapitalize="none"
-          />
-          <TouchableOpacity
-            style={[styles.addMarkerButton, (!newMarkerAddress.trim() || isAddingMarker) && styles.addMarkerButtonDisabled]}
-            disabled={!newMarkerAddress.trim() || isAddingMarker}
-            onPress={() => {
-              void handleAddMarkerFromAddress();
-            }}
-          >
-            {isAddingMarker ? (
-              <ActivityIndicator color="#000000" />
-            ) : (
-              <Text style={styles.addMarkerButtonText}>ADD MARKER</Text>
-            )}
-          </TouchableOpacity>
-          {localSearchMessage ? (
-            <Text style={styles.localSearchMessage}>{localSearchMessage}</Text>
-          ) : null}
-          {didYouMeanSuggestions.length > 0 ? (
-            <View style={styles.suggestionContainer}>
-              <Text style={styles.suggestionTitle}>DID YOU MEAN:</Text>
-              {didYouMeanSuggestions.map((suggestion) => (
-                <TouchableOpacity
-                  key={`${suggestion.name}_${suggestion.lat}_${suggestion.lng}`}
-                  style={styles.suggestionButton}
-                  onPress={() => {
-                    handleSuggestionPress(suggestion);
-                  }}
-                >
-                  <Text style={styles.suggestionItem}>{suggestion.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null}
-        </View>
         <ScrollView showsVerticalScrollIndicator={false}>
           {liveMarkers.length === 0 ? (
             <View style={styles.card}>
@@ -565,6 +527,78 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={isManualMarkerModalVisible}
+        onRequestClose={() => setIsManualMarkerModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>ADD MARKER BY ADDRESS</Text>
+            <TextInput
+              value={newMarkerName}
+              onChangeText={setNewMarkerName}
+              style={styles.modalInput}
+              placeholder="MARKER NAME"
+              placeholderTextColor="#6b7280"
+              autoCapitalize="characters"
+            />
+            <TextInput
+              value={newMarkerAddress}
+              onChangeText={setNewMarkerAddress}
+              style={styles.modalInput}
+              placeholder="PLACE OR ADDRESS (E.G. TATE HALL)"
+              placeholderTextColor="#6b7280"
+              autoCapitalize="none"
+            />
+            <TouchableOpacity
+              style={[
+                styles.addMarkerButton,
+                (!newMarkerAddress.trim() || isAddingMarker) && styles.addMarkerButtonDisabled
+              ]}
+              disabled={!newMarkerAddress.trim() || isAddingMarker}
+              onPress={() => {
+                void handleAddMarkerFromAddress();
+              }}
+            >
+              {isAddingMarker ? (
+                <ActivityIndicator color="#000000" />
+              ) : (
+                <Text style={styles.addMarkerButtonText}>SEARCH LOCAL & ADD</Text>
+              )}
+            </TouchableOpacity>
+            {localSearchMessage ? (
+              <Text style={styles.localSearchMessage}>{localSearchMessage}</Text>
+            ) : null}
+            {didYouMeanSuggestions.length > 0 ? (
+              <View style={styles.suggestionContainer}>
+                <Text style={styles.suggestionTitle}>DID YOU MEAN:</Text>
+                {didYouMeanSuggestions.map((suggestion) => (
+                  <TouchableOpacity
+                    key={`${suggestion.name}_${suggestion.lat}_${suggestion.lng}`}
+                    style={styles.suggestionButton}
+                    onPress={() => {
+                      handleSuggestionPress(suggestion);
+                    }}
+                  >
+                    <Text style={styles.suggestionItem}>{suggestion.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setIsManualMarkerModalVisible(false)}
+              >
+                <Text style={styles.modalCancelButtonText}>CLOSE</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -609,6 +643,31 @@ const styles = StyleSheet.create({
   mapContainer: {
     flex: 1,
     backgroundColor: "#020202",
+  },
+  leftMarkerButton: {
+    position: "absolute",
+    left: 12,
+    top: "45%",
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: "#000000",
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#ffffff",
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8
+  },
+  leftMarkerButtonText: {
+    color: "#000000",
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+    lineHeight: 18
   },
   mapContainerFullScreen: {
     borderTopLeftRadius: 0,
