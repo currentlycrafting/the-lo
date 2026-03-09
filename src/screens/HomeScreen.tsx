@@ -1,9 +1,18 @@
+import { useCallback, useState } from "react";
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { WebView } from "react-native-webview";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 type HomeScreenProps = {
   onSignOut: () => void;
   googleMapsApiKey: string;
+};
+
+type LiveMarker = {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
 };
 
 const CAMPUS_CENTER_LATITUDE = 44.9802;
@@ -27,6 +36,7 @@ function buildMapHtml(googleMapsApiKey: string): string {
       function initializeMap() {
         const center = { lat: ${CAMPUS_CENTER_LATITUDE}, lng: ${CAMPUS_CENTER_LONGITUDE} };
         const radiusMeters = ${CAMPUS_RADIUS_METERS};
+        const geocoder = new google.maps.Geocoder();
         const latitudeDelta = radiusMeters / 111320;
         const longitudeDelta = radiusMeters / (111320 * Math.cos(center.lat * Math.PI / 180));
         const allowedBounds = {
@@ -66,6 +76,49 @@ function buildMapHtml(googleMapsApiKey: string): string {
           title: "Dinkytown Center"
         });
 
+        function postMarkerToApp(marker) {
+          if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+            window.ReactNativeWebView.postMessage(
+              JSON.stringify({
+                type: "marker_added",
+                payload: marker
+              })
+            );
+          }
+        }
+
+        function addUserMarker(markerData) {
+          new google.maps.Marker({
+            position: { lat: markerData.lat, lng: markerData.lng },
+            map: map,
+            title: markerData.name
+          });
+          postMarkerToApp(markerData);
+        }
+
+        map.addListener("click", function(event) {
+          const rawName = window.prompt("Name this marker", "");
+          if (rawName === null) return;
+          const markerName = rawName.trim() || "UNTITLED";
+          const lat = event.latLng.lat();
+          const lng = event.latLng.lng();
+
+          geocoder.geocode({ location: { lat: lat, lng: lng } }, function(results, status) {
+            let address = "Address unavailable";
+            if (status === "OK" && results && results.length > 0) {
+              address = results[0].formatted_address;
+            }
+
+            addUserMarker({
+              id: "marker_" + Date.now() + "_" + Math.floor(Math.random() * 100000),
+              name: markerName,
+              address: address,
+              lat: lat,
+              lng: lng
+            });
+          });
+        });
+
         new google.maps.Rectangle({
           bounds: allowedBounds,
           strokeColor: "#ffffff",
@@ -87,7 +140,21 @@ function buildMapHtml(googleMapsApiKey: string): string {
 }
 
 export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
+  const [liveMarkers, setLiveMarkers] = useState<LiveMarker[]>([]);
   const mapHtml = buildMapHtml(googleMapsApiKey);
+  const handleMapMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const message = JSON.parse(event.nativeEvent.data);
+      if (message?.type !== "marker_added" || !message.payload) return;
+
+      const payload = message.payload as LiveMarker;
+      if (!payload.id || !payload.name) return;
+
+      setLiveMarkers((prev) => [payload, ...prev]);
+    } catch {
+      // Ignore malformed bridge messages from the webview.
+    }
+  }, []);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -99,22 +166,31 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       </View>
 
       <View style={styles.mapContainer}>
-        <WebView source={{ html: mapHtml }} originWhitelist={["*"]} javaScriptEnabled domStorageEnabled />
+        <WebView
+          source={{ html: mapHtml }}
+          originWhitelist={["*"]}
+          javaScriptEnabled
+          domStorageEnabled
+          onMessage={handleMapMessage}
+        />
       </View>
 
       <View style={styles.sheet}>
         <Text style={styles.sectionLabel}>LIVE SIGNALS</Text>
         <ScrollView showsVerticalScrollIndicator={false}>
-          {[
-            { title: "Coffman Union", meta: "0.4 MI :: ACTIVE" },
-            { title: "Dinkytown", meta: "0.8 MI :: BUILDING" },
-            { title: "Stadium Village", meta: "1.1 MI :: WATCH" },
-          ].map((item) => (
-            <View key={item.title} style={styles.card}>
-              <Text style={styles.cardTitle}>{item.title.toUpperCase()}</Text>
-              <Text style={styles.cardMeta}>{item.meta}</Text>
+          {liveMarkers.length === 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>NO MARKERS YET</Text>
+              <Text style={styles.cardMeta}>TAP THE MAP TO ADD A MARKER.</Text>
             </View>
-          ))}
+          ) : (
+            liveMarkers.map((marker) => (
+              <View key={marker.id} style={styles.card}>
+                <Text style={styles.cardTitle}>{marker.name.toUpperCase()}</Text>
+                <Text style={styles.cardMeta}>{marker.address}</Text>
+              </View>
+            ))
+          )}
         </ScrollView>
       </View>
     </SafeAreaView>
