@@ -11,7 +11,8 @@ import {
   TextInput,
   Pressable,
   TouchableOpacity,
-  View
+  View,
+  Image
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import * as FileSystem from "expo-file-system/legacy";
@@ -53,6 +54,7 @@ const MAP_MAX_ZOOM = 17;
 const MAP_INITIAL_ZOOM = 14;
 const MARKERS_DB_FILE_PATH = `${FileSystem.documentDirectory ?? ""}the_lo_markers_v1.json`;
 const VIEWER_DB_FILE_PATH = `${FileSystem.documentDirectory ?? ""}the_lo_viewer_id_v1.txt`;
+const STOCK_DEMO_MARKER_ID = "the_lo_demo_marker_001";
 
 type PlaceSearchCandidate = {
   name: string;
@@ -137,6 +139,34 @@ function buildMarkerFromLocation(params: {
     isLikedByViewer: false,
     notificationsEnabled: true
   };
+}
+
+function buildStockDemoMarker(): LiveMarker {
+  const marker = buildMarkerFromLocation({
+    name: "THE LO FRIDAY NIGHT",
+    address: "300 Washington Ave SE, Minneapolis, MN 55455, USA",
+    lat: CAMPUS_CENTER_LATITUDE + 0.0009,
+    lng: CAMPUS_CENTER_LONGITUDE + 0.0007
+  });
+
+  return {
+    ...marker,
+    id: STOCK_DEMO_MARKER_ID,
+    eventCategory: "NIGHTLIFE",
+    description: "Live DJ set, packed dance floor, and late-night energy. Tap in and preview the vibe.",
+    mediaUrls: [
+      "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=1200&q=80"
+    ],
+    heartCount: 24,
+    eyeCount: 87,
+    clickCount: 142
+  };
+}
+
+function isLikelyImageUrl(value: string): boolean {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("unsplash.com")) return true;
+  return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) => normalized.includes(ext));
 }
 
 function hydrateStoredMarker(raw: any): LiveMarker | null {
@@ -604,9 +634,19 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     const loadStoredMarkers = async () => {
       const hydrated = await readMarkersFromDb();
       if (!isMounted) return;
-      setLiveMarkers(hydrated);
-      if (isMapWebViewReady && hydrated.length > 0) {
-        syncMarkersToMap(hydrated);
+      const stockMarker = buildStockDemoMarker();
+      const existingStockMarker = hydrated.find((marker) => marker.id === STOCK_DEMO_MARKER_ID);
+      const nextMarkers = existingStockMarker ? hydrated : [stockMarker, ...hydrated];
+
+      setLiveMarkers(nextMarkers);
+      setSelectedMapSignal(existingStockMarker ?? stockMarker);
+
+      if (!existingStockMarker) {
+        void writeMarkersToDb(nextMarkers);
+      }
+
+      if (isMapWebViewReady) {
+        syncMarkersToMap(nextMarkers);
       }
     };
 
@@ -798,6 +838,35 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       true;
     `);
   }, [persistMarkers, selectedMapSignal]);
+
+  const handleOpenEventDetailsFromLiveSignal = useCallback((markerId: string) => {
+    setLiveMarkers((prev) => {
+      const markerIndex = prev.findIndex((marker) => marker.id === markerId);
+      if (markerIndex < 0) return prev;
+
+      const next = [...prev];
+      const current = next[markerIndex];
+      const alreadyViewedByCurrentViewer =
+        viewerId.length > 0 && current.viewerIds.includes(viewerId);
+      const nextViewerIds =
+        viewerId.length > 0 && !alreadyViewedByCurrentViewer
+          ? [...current.viewerIds, viewerId]
+          : current.viewerIds;
+
+      const updatedMarker: LiveMarker = {
+        ...current,
+        clickCount: current.clickCount + 1,
+        eyeCount: nextViewerIds.length,
+        viewerIds: nextViewerIds
+      };
+
+      next[markerIndex] = updatedMarker;
+      setSelectedMapSignal(updatedMarker);
+      syncMarkerUpdateToMap(updatedMarker);
+      void persistMarkers(next);
+      return next;
+    });
+  }, [persistMarkers, syncMarkerUpdateToMap, viewerId]);
 
   const handleAddMarkerFromAddress = useCallback(async () => {
     const markerName = (newMarkerName.trim() || "UNTITLED").toUpperCase();
@@ -1085,9 +1154,13 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
                         void Linking.openURL(mediaUrl);
                       }}
                     >
-                      <Ionicons name="image-outline" size={13} color="#ffffff" />
+                      {isLikelyImageUrl(mediaUrl) ? (
+                        <Image source={{ uri: mediaUrl }} style={styles.eventMediaPreviewImage} />
+                      ) : (
+                        <Ionicons name="image-outline" size={13} color="#ffffff" />
+                      )}
                       <Text style={styles.eventMediaItemText} numberOfLines={1}>
-                        {mediaUrl}
+                        {isLikelyImageUrl(mediaUrl) ? "VIEW EVENT IMAGE" : mediaUrl}
                       </Text>
                     </TouchableOpacity>
                   ))
@@ -1114,7 +1187,14 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           ) : (
             liveMarkers.map((marker) => (
               <View key={marker.id} style={styles.card}>
+                <TouchableOpacity
+                  onPress={() => {
+                    handleOpenEventDetailsFromLiveSignal(marker.id);
+                  }}
+                >
                 <Text style={styles.cardTitle}>{marker.name.toUpperCase()}</Text>
+                <Text style={styles.cardMetaAction}>VIEW EVENT DETAILS</Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => {
                     void handleOpenMarkerAddress(marker);
@@ -1378,7 +1458,7 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     bottom: 12,
-    top: "22%",
+    top: "6%",
     backgroundColor: "#0a0a0a",
     borderRadius: 20,
     borderWidth: 1,
@@ -1573,7 +1653,7 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   eventMediaItem: {
-    height: 30,
+    height: 64,
     borderRadius: 10,
     backgroundColor: "#1c1c1e",
     borderWidth: 1,
@@ -1590,6 +1670,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "600",
     flex: 1
+  },
+  eventMediaPreviewImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 8
   },
   eventDeleteButton: {
     marginTop: 8,
@@ -1684,6 +1769,13 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.8,
+  },
+  cardMetaAction: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.1,
+    marginBottom: 6
   },
   cardAddressLink: {
     color: "white",
