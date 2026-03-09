@@ -1,6 +1,7 @@
 # The-Lo
 
-Minimal React Native (Expo) app that renders a dark-themed Google Map in a WebView, constrained to a campus boundary.
+The Event Tracker for the University of Minnesota
+
 
 ## Tech Stack
 
