@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 type SignInScreenProps = {
   onSignIn: () => void;
@@ -57,7 +58,10 @@ export function SignInScreen({ onSignIn }: SignInScreenProps) {
               onPress={onSignIn}
               disabled={!canSignIn}
             >
-              <Text style={styles.signInButtonText}>SIGN IN</Text>
+              <View style={styles.signInButtonContent}>
+                <Ionicons name="log-in-outline" size={14} color="#000000" />
+                <Text style={styles.signInButtonText}>SIGN IN</Text>
+              </View>
             </TouchableOpacity>
           </View>
         </View>
@@ -134,5 +138,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     letterSpacing: 1.2,
+  },
+  signInButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
   },
 });
