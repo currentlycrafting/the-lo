@@ -165,7 +165,18 @@ function buildStockDemoMarker(): LiveMarker {
 
 function isLikelyImageUrl(value: string): boolean {
   const normalized = value.toLowerCase();
-  if (normalized.includes("unsplash.com")) return true;
+
+  // Prefer a host-based check for Unsplash URLs instead of a substring check
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (host === "unsplash.com" || host.endsWith(".unsplash.com")) {
+      return true;
+    }
+  } catch {
+    // If value is not a valid URL, fall through to extension-based heuristic
+  }
+
   return [".jpg", ".jpeg", ".png", ".webp", ".gif"].some((ext) => normalized.includes(ext));
 }
 
