@@ -47,12 +47,7 @@ type PlaceSearchCandidate = {
   score: number;
 };
 
-type PlaceSuggestion = {
-  name: string;
-  address: string;
-  lat: number;
-  lng: number;
-};
+type PlaceSearchBaseCandidate = Omit<PlaceSearchCandidate, "score">;
 
 function getDistanceMeters(
   fromLat: number,
@@ -77,7 +72,7 @@ function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function scorePlaceMatch(queryText: string, candidate: Omit<PlaceSearchCandidate, "score">): number {
+function scorePlaceMatch(queryText: string, candidate: PlaceSearchBaseCandidate): number {
   const normalizedQuery = normalizeSearchText(queryText);
   const normalizedName = normalizeSearchText(candidate.name);
 
@@ -134,7 +129,7 @@ async function searchLocalPlace(
       };
     })
     .filter((candidate: any) => candidate && candidate.distanceMeters <= SEARCH_RADIUS_METERS)
-    .map((candidate: Omit<PlaceSearchCandidate, "score">) => ({
+    .map((candidate: PlaceSearchBaseCandidate) => ({
       ...candidate,
       score: scorePlaceMatch(queryText, candidate)
     }))
@@ -217,10 +212,13 @@ function buildMapHtml(googleMapsApiKey: string): string {
         }
 
         function addUserMarker(markerData, shouldPost) {
-          new google.maps.Marker({
+          const marker = new google.maps.Marker({
             position: { lat: markerData.lat, lng: markerData.lng },
             map: map,
             title: markerData.name
+          });
+          marker.addListener("click", function() {
+            postToApp("marker_selected", markerData);
           });
           if (shouldPost !== false) {
             postMarkerToApp(markerData);
@@ -295,6 +293,7 @@ function buildMapHtml(googleMapsApiKey: string): string {
 
 export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [liveMarkers, setLiveMarkers] = useState<LiveMarker[]>([]);
+  const [selectedMapSignal, setSelectedMapSignal] = useState<LiveMarker | null>(null);
   const [newMarkerName, setNewMarkerName] = useState("");
   const [newMarkerAddress, setNewMarkerAddress] = useState("");
   const [isAddingMarker, setIsAddingMarker] = useState(false);
@@ -302,7 +301,6 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [isManualMarkerModalVisible, setIsManualMarkerModalVisible] = useState(false);
   const [isMapControlsExpanded, setIsMapControlsExpanded] = useState(false);
   const [localSearchMessage, setLocalSearchMessage] = useState("");
-  const [didYouMeanSuggestions, setDidYouMeanSuggestions] = useState<PlaceSuggestion[]>([]);
   const [tapMarkerNameInput, setTapMarkerNameInput] = useState("");
   const [pendingMapTapMarker, setPendingMapTapMarker] = useState<{
     lat: number;
@@ -340,12 +338,20 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       if (message?.type === "map_tapped_candidate" && message.payload) {
         const payload = message.payload as { lat: number; lng: number; address: string };
         if (typeof payload.lat !== "number" || typeof payload.lng !== "number") return;
+        setSelectedMapSignal(null);
         setPendingMapTapMarker({
           lat: payload.lat,
           lng: payload.lng,
           address: payload.address || "Address unavailable"
         });
         setTapMarkerNameInput("");
+        return;
+      }
+
+      if (message?.type === "marker_selected" && message.payload) {
+        const payload = message.payload as LiveMarker;
+        if (!payload.id || !payload.name) return;
+        setSelectedMapSignal(payload);
       }
     } catch {
       // Ignore malformed bridge messages from the webview.
@@ -377,7 +383,6 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       const candidates = await searchLocalPlace(queryText, googleMapsApiKey);
 
       if (candidates.length === 0) {
-        setDidYouMeanSuggestions([]);
         setLocalSearchMessage(
           `NO LOCAL MATCH FOUND WITHIN ${SEARCH_RADIUS_MILES} MILES.`
         );
@@ -385,16 +390,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       }
 
       const best = candidates[0];
-      const alternatives = candidates.slice(1, 3).map((candidate) => ({
-        name: candidate.name,
-        address: candidate.address,
-        lat: candidate.lat,
-        lng: candidate.lng
-      }));
-      setDidYouMeanSuggestions(alternatives);
-      setLocalSearchMessage(
-        alternatives.length > 0 ? "LOCAL MATCH FOUND. SEE ALTERNATIVES BELOW." : "LOCAL MATCH FOUND."
-      );
+      setLocalSearchMessage("LOCAL MATCH FOUND. MARKER ADDED.");
 
       const marker: LiveMarker = {
         id: `marker_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
@@ -413,23 +409,6 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       setIsAddingMarker(false);
     }
   }, [addMarkerToListAndMap, googleMapsApiKey, newMarkerAddress, newMarkerName]);
-
-  const handleSuggestionPress = useCallback((suggestion: PlaceSuggestion) => {
-    const markerName = (newMarkerName.trim() || suggestion.name || "UNTITLED").toUpperCase();
-    const marker: LiveMarker = {
-      id: `marker_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
-      name: markerName,
-      address: suggestion.address,
-      lat: suggestion.lat,
-      lng: suggestion.lng
-    };
-
-    addMarkerToListAndMap(marker);
-    setDidYouMeanSuggestions([]);
-    setLocalSearchMessage("ADDED SUGGESTED LOCAL MATCH.");
-    setNewMarkerName("");
-    setNewMarkerAddress("");
-  }, [addMarkerToListAndMap, newMarkerName]);
 
   const handleCancelTapMarkerModal = useCallback(() => {
     setPendingMapTapMarker(null);
@@ -483,7 +462,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           style={({ pressed }) => [styles.leftMarkerButton, pressed && styles.controlButtonPressed]}
           onPress={() => {
             setLocalSearchMessage("");
-            setDidYouMeanSuggestions([]);
+            setSelectedMapSignal(null);
             setIsManualMarkerModalVisible(true);
           }}
         >
@@ -558,6 +537,29 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
           >
             <Text style={styles.fullScreenExitButtonText}>EXIT FULL MAP</Text>
           </TouchableOpacity>
+        ) : null}
+        {selectedMapSignal ? (
+          <View style={styles.mapSignalPreview}>
+            <View style={styles.mapSignalPreviewHeader}>
+              <Text style={styles.mapSignalPreviewLabel}>LIVE SIGNAL</Text>
+              <TouchableOpacity
+                onPress={() => setSelectedMapSignal(null)}
+                style={styles.mapSignalPreviewCloseButton}
+              >
+                <Text style={styles.mapSignalPreviewCloseText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.mapSignalPreviewName}>{selectedMapSignal.name}</Text>
+            <TouchableOpacity
+              onPress={() => {
+                void handleOpenMarkerAddress(selectedMapSignal);
+              }}
+            >
+              <Text style={styles.mapSignalPreviewAddress} numberOfLines={2}>
+                {selectedMapSignal.address}
+              </Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
       </View>
 
@@ -670,22 +672,6 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             </TouchableOpacity>
             {localSearchMessage ? (
               <Text style={styles.localSearchMessage}>{localSearchMessage}</Text>
-            ) : null}
-            {didYouMeanSuggestions.length > 0 ? (
-              <View style={styles.suggestionContainer}>
-                <Text style={styles.suggestionTitle}>DID YOU MEAN:</Text>
-                {didYouMeanSuggestions.map((suggestion) => (
-                  <TouchableOpacity
-                    key={`${suggestion.name}_${suggestion.lat}_${suggestion.lng}`}
-                    style={styles.suggestionButton}
-                    onPress={() => {
-                      handleSuggestionPress(suggestion);
-                    }}
-                  >
-                    <Text style={styles.suggestionItem}>{suggestion.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
             ) : null}
             <View style={styles.modalActions}>
               <TouchableOpacity
@@ -839,6 +825,58 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 1.2
   },
+  mapSignalPreview: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    backgroundColor: "#111113",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  mapSignalPreviewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4
+  },
+  mapSignalPreviewLabel: {
+    color: "#9ca3af",
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 1.2
+  },
+  mapSignalPreviewCloseButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1c1c1e"
+  },
+  mapSignalPreviewCloseText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 14
+  },
+  mapSignalPreviewName: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 2
+  },
+  mapSignalPreviewAddress: {
+    color: "#e5e7eb",
+    fontSize: 11,
+    fontWeight: "500",
+    textDecorationLine: "underline"
+  },
   sheet: {
     height: 320,
     backgroundColor: "#0a0a0a",
@@ -886,30 +924,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.8
-  },
-  suggestionContainer: {
-    marginTop: 2
-  },
-  suggestionTitle: {
-    color: "#6b7280",
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 1.2,
-    marginBottom: 2
-  },
-  suggestionItem: {
-    color: "#e5e7eb",
-    fontSize: 11,
-    fontWeight: "600"
-  },
-  suggestionButton: {
-    backgroundColor: "#161616",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.08)",
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginBottom: 6
   },
   sectionLabel: {
     color: "#6b7280",
