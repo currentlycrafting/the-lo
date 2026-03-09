@@ -1,5 +1,16 @@
-import { useCallback, useState } from "react";
-import { Linking, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 type HomeScreenProps = {
@@ -18,9 +29,120 @@ type LiveMarker = {
 const CAMPUS_CENTER_LATITUDE = 44.9802;
 const CAMPUS_CENTER_LONGITUDE = -93.2362;
 const CAMPUS_RADIUS_METERS = 2000;
+const SEARCH_RADIUS_MILES = 3;
+const SEARCH_RADIUS_METERS = SEARCH_RADIUS_MILES * 1609.34;
 const MAP_MIN_ZOOM = 13;
 const MAP_MAX_ZOOM = 17;
 const MAP_INITIAL_ZOOM = 14;
+
+type PlaceSearchCandidate = {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  types: string[];
+  distanceMeters: number;
+  score: number;
+};
+
+type PlaceSuggestion = {
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+};
+
+function getDistanceMeters(
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number
+): number {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusMeters = 6371000;
+  const dLat = toRadians(toLat - fromLat);
+  const dLng = toRadians(toLng - fromLng);
+  const lat1 = toRadians(fromLat);
+  const lat2 = toRadians(toLat);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusMeters * c;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function scorePlaceMatch(queryText: string, candidate: Omit<PlaceSearchCandidate, "score">): number {
+  const normalizedQuery = normalizeSearchText(queryText);
+  const normalizedName = normalizeSearchText(candidate.name);
+
+  let score = 0;
+
+  if (normalizedName === normalizedQuery) score += 100;
+  else if (normalizedName.startsWith(normalizedQuery)) score += 65;
+  else if (normalizedName.includes(normalizedQuery)) score += 35;
+
+  const relevantTypes = ["university", "school", "premise", "point_of_interest", "establishment"];
+  if (candidate.types.some((type) => relevantTypes.includes(type))) score += 20;
+
+  // Closer matches score higher.
+  score += Math.max(0, 40 - candidate.distanceMeters / 100);
+
+  return score;
+}
+
+async function searchLocalPlace(
+  queryText: string,
+  googleMapsApiKey: string
+): Promise<PlaceSearchCandidate[]> {
+  const endpoint =
+    "https://maps.googleapis.com/maps/api/place/textsearch/json?" +
+    `query=${encodeURIComponent(queryText)}&` +
+    `location=${CAMPUS_CENTER_LATITUDE},${CAMPUS_CENTER_LONGITUDE}&` +
+    `radius=${Math.round(SEARCH_RADIUS_METERS)}&` +
+    `key=${encodeURIComponent(googleMapsApiKey)}`;
+
+  const response = await fetch(endpoint);
+  const data = await response.json();
+  const results = Array.isArray(data?.results) ? data.results : [];
+
+  const localCandidates = results
+    .map((result: any) => {
+      const lat = result?.geometry?.location?.lat;
+      const lng = result?.geometry?.location?.lng;
+      if (typeof lat !== "number" || typeof lng !== "number") return null;
+
+      const distanceMeters = getDistanceMeters(
+        CAMPUS_CENTER_LATITUDE,
+        CAMPUS_CENTER_LONGITUDE,
+        lat,
+        lng
+      );
+
+      return {
+        name: result?.name || "UNTITLED",
+        address: result?.formatted_address || "Address unavailable",
+        lat,
+        lng,
+        types: Array.isArray(result?.types) ? result.types : [],
+        distanceMeters
+      };
+    })
+    .filter((candidate: any) => candidate && candidate.distanceMeters <= SEARCH_RADIUS_METERS)
+    .map((candidate: Omit<PlaceSearchCandidate, "score">) => ({
+      ...candidate,
+      score: scorePlaceMatch(queryText, candidate)
+    }))
+    .sort((a: PlaceSearchCandidate, b: PlaceSearchCandidate) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.distanceMeters - b.distanceMeters;
+    });
+
+  return localCandidates;
+}
 
 function buildMapHtml(googleMapsApiKey: string): string {
   return `
@@ -87,14 +209,20 @@ function buildMapHtml(googleMapsApiKey: string): string {
           }
         }
 
-        function addUserMarker(markerData) {
+        function addUserMarker(markerData, shouldPost) {
           new google.maps.Marker({
             position: { lat: markerData.lat, lng: markerData.lng },
             map: map,
             title: markerData.name
           });
-          postMarkerToApp(markerData);
+          if (shouldPost !== false) {
+            postMarkerToApp(markerData);
+          }
         }
+
+        window.addMarkerFromNative = function(markerData) {
+          addUserMarker(markerData, false);
+        };
 
         map.addListener("click", function(event) {
           const rawName = window.prompt("Name this marker", "");
@@ -115,7 +243,7 @@ function buildMapHtml(googleMapsApiKey: string): string {
               address: address,
               lat: lat,
               lng: lng
-            });
+            }, true);
           });
         });
 
@@ -141,6 +269,13 @@ function buildMapHtml(googleMapsApiKey: string): string {
 
 export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [liveMarkers, setLiveMarkers] = useState<LiveMarker[]>([]);
+  const [newMarkerName, setNewMarkerName] = useState("");
+  const [newMarkerAddress, setNewMarkerAddress] = useState("");
+  const [isAddingMarker, setIsAddingMarker] = useState(false);
+  const [isMapFullScreen, setIsMapFullScreen] = useState(false);
+  const [localSearchMessage, setLocalSearchMessage] = useState("");
+  const [didYouMeanSuggestions, setDidYouMeanSuggestions] = useState<PlaceSuggestion[]>([]);
+  const mapWebViewRef = useRef<WebView>(null);
   const mapHtml = buildMapHtml(googleMapsApiKey);
 
   const handleOpenMarkerAddress = useCallback(async (marker: LiveMarker) => {
@@ -162,27 +297,175 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     }
   }, []);
 
+  const addMarkerToListAndMap = useCallback((marker: LiveMarker) => {
+    setLiveMarkers((prev) => [marker, ...prev]);
+
+    const markerJson = JSON.stringify(marker)
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'");
+
+    mapWebViewRef.current?.injectJavaScript(`
+      if (window.addMarkerFromNative) {
+        window.addMarkerFromNative(JSON.parse('${markerJson}'));
+      }
+      true;
+    `);
+  }, []);
+
+  const handleAddMarkerFromAddress = useCallback(async () => {
+    const markerName = (newMarkerName.trim() || "UNTITLED").toUpperCase();
+    const queryText = newMarkerAddress.trim();
+    if (!queryText || !googleMapsApiKey) return;
+
+    setIsAddingMarker(true);
+    try {
+      const candidates = await searchLocalPlace(queryText, googleMapsApiKey);
+
+      if (candidates.length === 0) {
+        setDidYouMeanSuggestions([]);
+        setLocalSearchMessage(
+          `NO LOCAL MATCH FOUND WITHIN ${SEARCH_RADIUS_MILES} MILES.`
+        );
+        return;
+      }
+
+      const best = candidates[0];
+      const alternatives = candidates.slice(1, 3).map((candidate) => ({
+        name: candidate.name,
+        address: candidate.address,
+        lat: candidate.lat,
+        lng: candidate.lng
+      }));
+      setDidYouMeanSuggestions(alternatives);
+      setLocalSearchMessage(
+        alternatives.length > 0 ? "LOCAL MATCH FOUND. SEE ALTERNATIVES BELOW." : "LOCAL MATCH FOUND."
+      );
+
+      const marker: LiveMarker = {
+        id: `marker_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+        name: markerName,
+        address: best.address,
+        lat: best.lat,
+        lng: best.lng
+      };
+      addMarkerToListAndMap(marker);
+
+      setNewMarkerName("");
+      setNewMarkerAddress("");
+      Alert.alert("Marker Added", `${marker.name} added near Dinkytown.`);
+    } finally {
+      setIsAddingMarker(false);
+    }
+  }, [addMarkerToListAndMap, googleMapsApiKey, newMarkerAddress, newMarkerName]);
+
+  const handleSuggestionPress = useCallback((suggestion: PlaceSuggestion) => {
+    const markerName = (newMarkerName.trim() || suggestion.name || "UNTITLED").toUpperCase();
+    const marker: LiveMarker = {
+      id: `marker_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+      name: markerName,
+      address: suggestion.address,
+      lat: suggestion.lat,
+      lng: suggestion.lng
+    };
+
+    addMarkerToListAndMap(marker);
+    setDidYouMeanSuggestions([]);
+    setLocalSearchMessage("ADDED SUGGESTED LOCAL MATCH.");
+    setNewMarkerName("");
+    setNewMarkerAddress("");
+  }, [addMarkerToListAndMap, newMarkerName]);
+
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.header}>
-        <Text style={styles.wordmark}>THE LO</Text>
-        <TouchableOpacity onPress={onSignOut} style={styles.headerButton}>
-          <Text style={styles.headerButtonText}>SIGN OUT</Text>
-        </TouchableOpacity>
-      </View>
+      {!isMapFullScreen ? (
+        <View style={styles.header}>
+          <Text style={styles.wordmark}>THE LO</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={() => setIsMapFullScreen(true)}
+              style={styles.headerButton}
+            >
+              <Text style={styles.headerButtonText}>FULL MAP</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onSignOut} style={styles.headerButton}>
+              <Text style={styles.headerButtonText}>SIGN OUT</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
-      <View style={styles.mapContainer}>
+      <View style={[styles.mapContainer, isMapFullScreen && styles.mapContainerFullScreen]}>
         <WebView
+          ref={mapWebViewRef}
           source={{ html: mapHtml }}
           originWhitelist={["*"]}
           javaScriptEnabled
           domStorageEnabled
           onMessage={handleMapMessage}
         />
+        {isMapFullScreen ? (
+          <TouchableOpacity
+            style={styles.fullScreenExitButton}
+            onPress={() => setIsMapFullScreen(false)}
+          >
+            <Text style={styles.fullScreenExitButtonText}>EXIT FULL MAP</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      <View style={styles.sheet}>
+      {!isMapFullScreen ? (
+        <View style={styles.sheet}>
         <Text style={styles.sectionLabel}>LIVE SIGNALS</Text>
+        <View style={styles.addMarkerContainer}>
+          <TextInput
+            value={newMarkerName}
+            onChangeText={setNewMarkerName}
+            style={styles.markerInput}
+            placeholder="MARKER NAME"
+            placeholderTextColor="#6b7280"
+            autoCapitalize="characters"
+          />
+          <TextInput
+            value={newMarkerAddress}
+            onChangeText={setNewMarkerAddress}
+            style={styles.markerInput}
+            placeholder="PLACE OR ADDRESS (E.G. TATE HALL)"
+            placeholderTextColor="#6b7280"
+            autoCapitalize="none"
+          />
+          <TouchableOpacity
+            style={[styles.addMarkerButton, (!newMarkerAddress.trim() || isAddingMarker) && styles.addMarkerButtonDisabled]}
+            disabled={!newMarkerAddress.trim() || isAddingMarker}
+            onPress={() => {
+              void handleAddMarkerFromAddress();
+            }}
+          >
+            {isAddingMarker ? (
+              <ActivityIndicator color="#000000" />
+            ) : (
+              <Text style={styles.addMarkerButtonText}>ADD MARKER</Text>
+            )}
+          </TouchableOpacity>
+          {localSearchMessage ? (
+            <Text style={styles.localSearchMessage}>{localSearchMessage}</Text>
+          ) : null}
+          {didYouMeanSuggestions.length > 0 ? (
+            <View style={styles.suggestionContainer}>
+              <Text style={styles.suggestionTitle}>DID YOU MEAN:</Text>
+              {didYouMeanSuggestions.map((suggestion) => (
+                <TouchableOpacity
+                  key={`${suggestion.name}_${suggestion.lat}_${suggestion.lng}`}
+                  style={styles.suggestionButton}
+                  onPress={() => {
+                    handleSuggestionPress(suggestion);
+                  }}
+                >
+                  <Text style={styles.suggestionItem}>{suggestion.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
         <ScrollView showsVerticalScrollIndicator={false}>
           {liveMarkers.length === 0 ? (
             <View style={styles.card}>
@@ -204,7 +487,8 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             ))
           )}
         </ScrollView>
-      </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -221,6 +505,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  headerActions: {
+    flexDirection: "row",
+    gap: 8
   },
   wordmark: {
     color: "#ffffff",
@@ -246,8 +534,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#020202",
   },
+  mapContainerFullScreen: {
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0
+  },
+  fullScreenExitButton: {
+    position: "absolute",
+    top: 16,
+    right: 16,
+    backgroundColor: "rgba(0,0,0,0.75)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8
+  },
+  fullScreenExitButtonText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.2
+  },
   sheet: {
-    height: 240,
+    height: 320,
     backgroundColor: "#0a0a0a",
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
@@ -255,6 +564,68 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.05)",
     paddingHorizontal: 20,
     paddingTop: 16,
+  },
+  addMarkerContainer: {
+    marginBottom: 12,
+    gap: 8
+  },
+  markerInput: {
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#1c1c1e",
+    color: "#ffffff",
+    paddingHorizontal: 12,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.6
+  },
+  addMarkerButton: {
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  addMarkerButtonDisabled: {
+    opacity: 0.5
+  },
+  addMarkerButtonText: {
+    color: "#000000",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.2
+  },
+  localSearchMessage: {
+    color: "#9ca3af",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8
+  },
+  suggestionContainer: {
+    marginTop: 2
+  },
+  suggestionTitle: {
+    color: "#6b7280",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    marginBottom: 2
+  },
+  suggestionItem: {
+    color: "#e5e7eb",
+    fontSize: 11,
+    fontWeight: "600"
+  },
+  suggestionButton: {
+    backgroundColor: "#161616",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginBottom: 6
   },
   sectionLabel: {
     color: "#6b7280",
