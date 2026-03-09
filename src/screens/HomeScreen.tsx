@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Linking, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 type HomeScreenProps = {
@@ -99,7 +99,7 @@ function buildMapHtml(googleMapsApiKey: string): string {
         map.addListener("click", function(event) {
           const rawName = window.prompt("Name this marker", "");
           if (rawName === null) return;
-          const markerName = rawName.trim() || "UNTITLED";
+          const markerName = (rawName.trim() || "UNTITLED").toUpperCase();
           const lat = event.latLng.lat();
           const lng = event.latLng.lng();
 
@@ -142,6 +142,12 @@ function buildMapHtml(googleMapsApiKey: string): string {
 export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [liveMarkers, setLiveMarkers] = useState<LiveMarker[]>([]);
   const mapHtml = buildMapHtml(googleMapsApiKey);
+
+  const handleOpenMarkerAddress = useCallback(async (marker: LiveMarker) => {
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${marker.lat},${marker.lng}`;
+    await Linking.openURL(mapsUrl);
+  }, []);
+
   const handleMapMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const message = JSON.parse(event.nativeEvent.data);
@@ -187,7 +193,13 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             liveMarkers.map((marker) => (
               <View key={marker.id} style={styles.card}>
                 <Text style={styles.cardTitle}>{marker.name.toUpperCase()}</Text>
-                <Text style={styles.cardMeta}>{marker.address}</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    void handleOpenMarkerAddress(marker);
+                  }}
+                >
+                  <Text style={[styles.cardMeta, styles.cardAddressLink]}>{marker.address}</Text>
+                </TouchableOpacity>
               </View>
             ))
           )}
@@ -270,5 +282,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.8,
+  },
+  cardAddressLink: {
+    color: "white",
+    textDecorationLine: "underline",
   },
 });
