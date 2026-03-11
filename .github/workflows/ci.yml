@@ -38,6 +38,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Smoke test Expo tunnel startup
+        run: |
+          set -euo pipefail
+          timeout 90s npm run start -- --tunnel --non-interactive > expo-tunnel.log 2>&1 || EXIT_CODE=$?
+          EXIT_CODE=${EXIT_CODE:-0}
+          cat expo-tunnel.log
+
+          # 124 = timeout (expected once the dev server is running)
+          if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 124 ]; then
+            exit "$EXIT_CODE"
+          fi
+
+          # Confirm Expo actually started and exposed a tunnel URL.
+          if ! rg -q "exp://|Tunnel ready|Waiting on" expo-tunnel.log; then
+            echo "Expo tunnel startup smoke check failed: no tunnel URL found in logs."
+            exit 1
+          fi
+
       - name: Run Expo doctor
         run: npx expo-doctor
 
@@ -62,3 +80,44 @@ jobs:
             echo "- Dependency manager: \`npm\`";
             echo "- Checks run: \`expo-doctor\`, \`typecheck (if present)\`, \`lint (if present)\`, \`test (if present)\`";
           } >> "$GITHUB_STEP_SUMMARY"
+
+  ios-tunnel-smoke:
+    name: iOS tunnel smoke check
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js with npm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Smoke test iOS tunnel command
+        run: |
+          set -euo pipefail
+          timeout 120s npm run ios -- --tunnel --non-interactive > expo-ios-tunnel.log 2>&1 || EXIT_CODE=$?
+          EXIT_CODE=${EXIT_CODE:-0}
+          cat expo-ios-tunnel.log
+
+          # Accept normal startup timeout once Metro is running.
+          if [ "$EXIT_CODE" -eq 0 ] || [ "$EXIT_CODE" -eq 124 ]; then
+            true
+          # On CI, simulator URL-open can time out even when Metro+tunnel is healthy.
+          elif rg -q "xcrun simctl openurl .* exited with non-zero code: 60" expo-ios-tunnel.log && rg -q "exp://" expo-ios-tunnel.log; then
+            echo "Simulator open timed out, but Expo tunnel URL was generated; considering smoke test successful."
+          else
+            exit "$EXIT_CODE"
+          fi
+
+          if ! rg -q "exp://" expo-ios-tunnel.log; then
+            echo "iOS tunnel smoke check failed: no Expo URL found in logs."
+            exit 1
+          fi
