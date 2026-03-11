@@ -38,10 +38,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Expo tunnel dependency
+        run: npm install -g @expo/ngrok@^4.1.0
+
       - name: Smoke test Expo tunnel startup
         run: |
           set -euo pipefail
-          timeout 90s npm run start -- --tunnel --non-interactive > expo-tunnel.log 2>&1 || EXIT_CODE=$?
+          timeout 90s npm run start -- --tunnel > expo-tunnel.log 2>&1 || EXIT_CODE=$?
           EXIT_CODE=${EXIT_CODE:-0}
           cat expo-tunnel.log
 
@@ -100,10 +103,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Expo tunnel dependency
+        run: npm install -g @expo/ngrok@^4.1.0
+
       - name: Smoke test iOS tunnel command
         run: |
           set -euo pipefail
-          timeout 120s npm run ios -- --tunnel --non-interactive > expo-ios-tunnel.log 2>&1 || EXIT_CODE=$?
+          timeout 120s npm run ios -- --tunnel > expo-ios-tunnel.log 2>&1 || EXIT_CODE=$?
           EXIT_CODE=${EXIT_CODE:-0}
           cat expo-ios-tunnel.log
 
