@@ -14,16 +14,17 @@
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
     "expo": "~55.0.5",
-    "expo-blur": "^55.0.8",
+    "expo-blur": "~55.0.9",
     "expo-file-system": "~55.0.10",
-    "expo-image-picker": "~55.0.11",
+    "expo-font": "~55.0.4",
+    "expo-image-picker": "~55.0.12",
     "react": "19.2.0",
     "react-native": "0.83.2",
     "react-native-webview": "13.16.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/jest": "^30.0.0",
+    "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.57.0",
