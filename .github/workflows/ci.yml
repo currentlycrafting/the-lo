@@ -54,7 +54,7 @@ jobs:
           fi
 
           # Confirm Expo actually started and exposed a tunnel URL.
-          if ! rg -q "exp://|Tunnel ready|Waiting on" expo-tunnel.log; then
+          if ! grep -Eq "exp://|Tunnel ready|Waiting on" expo-tunnel.log; then
             echo "Expo tunnel startup smoke check failed: no tunnel URL found in logs."
             exit 1
           fi
@@ -109,21 +109,40 @@ jobs:
       - name: Smoke test iOS tunnel command
         run: |
           set -euo pipefail
-          timeout 120s npm run ios -- --tunnel > expo-ios-tunnel.log 2>&1 || EXIT_CODE=$?
-          EXIT_CODE=${EXIT_CODE:-0}
+          EXIT_CODE=0
+          npm run ios -- --tunnel > expo-ios-tunnel.log 2>&1 &
+          CMD_PID=$!
+          ELAPSED=0
+          MAX_SECONDS=120
+
+          while kill -0 "$CMD_PID" 2>/dev/null; do
+            if [ "$ELAPSED" -ge "$MAX_SECONDS" ]; then
+              kill "$CMD_PID" 2>/dev/null || true
+              wait "$CMD_PID" 2>/dev/null || true
+              EXIT_CODE=124
+              break
+            fi
+            sleep 1
+            ELAPSED=$((ELAPSED + 1))
+          done
+
+          if [ "$EXIT_CODE" -ne 124 ]; then
+            wait "$CMD_PID" || EXIT_CODE=$?
+          fi
+
           cat expo-ios-tunnel.log
 
           # Accept normal startup timeout once Metro is running.
           if [ "$EXIT_CODE" -eq 0 ] || [ "$EXIT_CODE" -eq 124 ]; then
             true
           # On CI, simulator URL-open can time out even when Metro+tunnel is healthy.
-          elif rg -q "xcrun simctl openurl .* exited with non-zero code: 60" expo-ios-tunnel.log && rg -q "exp://" expo-ios-tunnel.log; then
+          elif grep -Eq "xcrun simctl openurl .* exited with non-zero code: 60" expo-ios-tunnel.log && grep -Eq "exp://" expo-ios-tunnel.log; then
             echo "Simulator open timed out, but Expo tunnel URL was generated; considering smoke test successful."
           else
             exit "$EXIT_CODE"
           fi
 
-          if ! rg -q "exp://" expo-ios-tunnel.log; then
+          if ! grep -Eq "exp://" expo-ios-tunnel.log; then
             echo "iOS tunnel smoke check failed: no Expo URL found in logs."
             exit 1
           fi
