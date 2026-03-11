@@ -6,7 +6,10 @@
     "start": "dotenv -e config/env/.env -- expo start",
     "android": "dotenv -e config/env/.env -- expo start --android",
     "ios": "dotenv -e config/env/.env -- expo start --ios",
-    "web": "dotenv -e config/env/.env -- expo start --web"
+    "web": "dotenv -e config/env/.env -- expo start --web",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "test": "jest --passWithNoTests"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -19,8 +22,16 @@
     "react-native-webview": "13.16.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
     "dotenv-cli": "^11.0.0",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
+    "jest": "^29.7.0",
+    "jest-expo": "^55.0.9",
     "typescript": "~5.9.2"
   },
   "private": true
