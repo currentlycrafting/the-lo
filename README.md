@@ -1,60 +1,76 @@
 # The-Lo
 
-The Event Tracker for the University of Minnesota
+The-Lo is a mobile-first campus event map for the University of Minnesota area. Users can add event markers, browse live signals, open venue directions, and attach media to event cards.
 
+## Current Features
+
+- Lightweight sign-in gate to enter the app UI.
+- Google Maps-powered map view inside a `WebView`.
+- Marker creation from map taps and from address/place search.
+- Marker details with category, date/time, venue, description, and counters.
+- Per-event interactions: like/unlike, notification toggle, view/click tracking, delete.
+- Media attachment flow using device library permissions and picker.
+- Local persistence of markers + viewer identity using `expo-file-system`.
+- Full-map mode with in-map controls (zoom, pan, recenter).
 
 ## Tech Stack
 
-- Expo
-- React Native
-- TypeScript
+- Expo SDK 55
+- React Native + TypeScript
 - `react-native-webview`
+- `expo-file-system`
+- `expo-image-picker`
+- `expo-blur`
 
 ## Prerequisites
 
-- Node.js + npm
-- Xcode + iOS Simulator (for iOS)
+- Node.js 22+ and npm
+- Xcode + iOS Simulator (for iOS runs)
+- Google Maps JavaScript API key
 
-## Install
+## Setup
+
+1. Install dependencies:
 
 ```bash
 npm install
 ```
 
-## Environment Setup
-
-This project loads environment variables from:
-
-- `config/env/.env`
-
-Required variable:
-
-- `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY`
-
-If needed, copy the template:
+2. Create env file:
 
 ```bash
 cp config/env/.env.example config/env/.env
 ```
 
-Then set your API key in `config/env/.env`.
+3. Set `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` in `config/env/.env`.
 
 ## Run
 
-Start iOS simulator:
+Primary iOS command (recommended):
 
 ```bash
-npm run ios
+npm install
+npm run ios -- --tunnel
 ```
 
-Other targets:
+Other common targets:
 
 ```bash
+npm run start
 npm run android
 npm run web
 ```
 
-## Project Structure
+## Quality Checks
+
+- Typecheck: `npm run typecheck`
+- Lint: `npm run lint`
+- Tests: `npm test`
+- Expo health check: `npx expo-doctor`
+
+GitHub Actions CI also runs validation checks plus tunnel smoke tests, including an iOS tunnel smoke check on macOS.
+
+## Project Layout
 
 ```text
 src/
@@ -62,19 +78,17 @@ src/
     App.tsx
     AppRoot.tsx
     registerRoot.ts
+  screens/
+    SignInScreen.tsx
+    HomeScreen.tsx
 
 config/
   env/
-    .env
     .env.example
     README.md
-
-app.json
-index.ts
-App.tsx
 ```
 
 ## Notes
 
-- The map UI and boundary behavior are defined in `src/app/AppRoot.tsx`.
-- Keep secrets out of git. `config/env/.env` should remain local.
+- Runtime env values are loaded from `config/env/.env` via `dotenv-cli`.
+- Do not commit secrets; keep `config/env/.env` local-only.
