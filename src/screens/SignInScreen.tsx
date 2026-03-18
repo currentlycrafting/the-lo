@@ -1,25 +1,25 @@
-import { useMemo, useState } from "react";
+import { useCallback } from "react";
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 type SignInScreenProps = {
-  onSignIn: () => void;
+  onContinue: () => void;
 };
 
-export function SignInScreen({ onSignIn }: SignInScreenProps) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const canSignIn = useMemo(() => email.trim().length > 0 && password.trim().length > 0, [email, password]);
+export function SignInScreen({ onContinue }: SignInScreenProps) {
+  const handleContinue = useCallback(() => {
+    Alert.alert("Guest Mode", "Authentication is coming soon. For now, you’re continuing as a guest.");
+    onContinue();
+  }, [onContinue]);
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -28,39 +28,21 @@ export function SignInScreen({ onSignIn }: SignInScreenProps) {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.content}>
-          <Text style={styles.wordmark}>THE LO</Text>
+          <Text accessibilityRole="header" style={styles.wordmark}>
+            THE LO
+          </Text>
           <Text style={styles.tagline}>KNOW THE LO.</Text>
 
           <View style={styles.formCard}>
-            <Text style={styles.formLabel}>EMAIL</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@example.com"
-              placeholderTextColor="#6b7280"
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-
-            <Text style={styles.formLabel}>PASSWORD</Text>
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="••••••••"
-              placeholderTextColor="#6b7280"
-              secureTextEntry
-            />
-
             <TouchableOpacity
-              style={[styles.signInButton, !canSignIn && styles.signInButtonDisabled]}
-              onPress={onSignIn}
-              disabled={!canSignIn}
+              accessibilityRole="button"
+              accessibilityLabel="Continue as guest"
+              style={styles.signInButton}
+              onPress={handleContinue}
             >
               <View style={styles.signInButtonContent}>
                 <Ionicons name="log-in-outline" size={14} color="#000000" />
-                <Text style={styles.signInButtonText}>SIGN IN</Text>
+                <Text style={styles.signInButtonText}>CONTINUE</Text>
               </View>
             </TouchableOpacity>
           </View>
@@ -105,33 +87,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.05)",
     padding: 16,
   },
-  formLabel: {
-    color: "#6b7280",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.6,
-    marginBottom: 6,
-  },
-  input: {
-    height: 44,
-    borderRadius: 999,
-    backgroundColor: "#0a0a0a",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
-    color: "#ffffff",
-    paddingHorizontal: 14,
-    marginBottom: 14,
-  },
   signInButton: {
-    marginTop: 6,
     height: 44,
     borderRadius: 999,
     backgroundColor: "#ffffff",
     alignItems: "center",
     justifyContent: "center",
-  },
-  signInButtonDisabled: {
-    opacity: 0.45,
   },
   signInButtonText: {
     color: "#000000",

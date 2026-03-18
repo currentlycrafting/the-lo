@@ -7,16 +7,16 @@ import { SignInScreen } from "../screens/SignInScreen";
  */
 export function AppRoot() {
   const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
-  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [hasEntered, setHasEntered] = useState(false);
 
-  if (!isSignedIn) {
-    return <SignInScreen onSignIn={() => setIsSignedIn(true)} />;
+  if (!hasEntered) {
+    return <SignInScreen onContinue={() => setHasEntered(true)} />;
   }
 
   return (
     <HomeScreen
       googleMapsApiKey={googleMapsApiKey}
-      onSignOut={() => setIsSignedIn(false)}
+      onSignOut={() => setHasEntered(false)}
     />
   );
 }
