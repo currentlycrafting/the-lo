@@ -1,20 +1,21 @@
-name: Expo CI
+name: Frontend CI
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
 
-# Keep only the latest run per branch/PR.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: frontend-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Minimal permissions for validation-only workflow.
 permissions:
   contents: read
 
@@ -23,6 +24,10 @@ jobs:
     name: Validate code quality
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: frontend
 
     steps:
       - name: Checkout repository
@@ -33,7 +38,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -62,32 +67,35 @@ jobs:
       - name: Run Expo doctor
         run: npx expo-doctor
 
-      - name: Run TypeScript typecheck (if present)
-        run: npm run typecheck --if-present
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
 
-      - name: Run lint checks (if present)
-        run: npm run lint --if-present
+      - name: Run lint checks
+        run: npm run lint
 
-      - name: Run tests (if present)
-        run: npm test --if-present
+      - name: Run tests
+        run: npm test -- --passWithNoTests
 
       - name: Add CI summary
         if: success()
         run: |
           {
-            echo "## CI Validation Passed";
+            echo "## Frontend CI Passed";
             echo "";
             echo "- Trigger: \`${{ github.event_name }}\`";
             echo "- Ref: \`${{ github.ref_name }}\`";
             echo "- Node: \`22\`";
-            echo "- Dependency manager: \`npm\`";
-            echo "- Checks run: \`expo-doctor\`, \`typecheck (if present)\`, \`lint (if present)\`, \`test (if present)\`";
+            echo "- Checks: \`expo-doctor\`, \`typecheck\`, \`lint\`, \`test\`";
           } >> "$GITHUB_STEP_SUMMARY"
 
   ios-tunnel-smoke:
     name: iOS tunnel smoke check
     runs-on: macos-latest
     timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: frontend
 
     steps:
       - name: Checkout repository
@@ -98,7 +106,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci

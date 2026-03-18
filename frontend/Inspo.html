@@ -1,0 +1,243 @@
+<html lang="en" vid="0"><head vid="1">
+    <meta charset="UTF-8" vid="2">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" vid="3">
+    <title vid="4">THE LO</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17" vid="5"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Oswald:wght@500;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet" vid="6">
+    <script src="https://unpkg.com/lucide@latest" vid="7"></script>
+    <style vid="8">
+        body, html {
+            height: 100%;
+            width: 100%;
+            background-color: #050505;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .font-display {
+            font-family: 'Oswald', sans-serif;
+            text-transform: uppercase;
+        }
+        
+        .font-mono-custom {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        
+        .map-grid {
+            background-image: 
+                linear-gradient(#2a2a2a 1.5px, transparent 1.5px),
+                linear-gradient(90deg, #2a2a2a 1.5px, transparent 1.5px);
+            background-size: 50px 50px;
+            opacity: 0.8;
+        }
+
+        
+        .street-line {
+            filter: drop-shadow(0 0 2px rgba(255,255,255,0.15));
+            stroke-width: 2.5px !important;
+            stroke: #333 !important;
+            opacity: 1 !important;
+        }
+
+        .nav-shadow {
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.95);
+        }
+        
+        .pulse-ring-subtle::before {
+            content: '';
+            position: absolute;
+            left: -8px; top: -8px; right: -8px; bottom: -8px;
+            border-radius: 50%; 
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            animation: pulse-ring 3s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+
+        
+        .frosted-handle {
+            background: linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.05) 100%);
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body class="bg-[#050505] text-white relative flex flex-col h-full w-full select-none overflow-hidden" vid="9">
+
+    <div class="px-5 pt-12 pb-4 z-20 bg-[#050505]" vid="10">
+        <div class="flex items-center justify-between mb-6" vid="11">
+            <h1 class="text-3xl font-display font-bold tracking-tight text-white leading-none" vid="12">THE LO</h1>
+            
+            <div class="flex-1 mx-4 relative" vid="13">
+                <div class="bg-[#1c1c1e] rounded-full h-11 flex items-center px-4 transition-colors group focus-within:bg-[#2c2c2e]" vid="14">
+                    <i data-lucide="search" class="w-4 h-4 text-gray-400 mr-3" vid="15"></i>
+                    <input type="text" placeholder="SEARCH_NODES..." class="bg-transparent text-sm font-normal text-white placeholder-gray-500 w-full focus:outline-none tracking-wide pb-[1px]" vid="16">
+                </div>
+            </div>
+
+            <div class="w-11 h-11 rounded-full bg-[#1c1c1e] flex items-center justify-center text-[#fbbf24] hover:bg-[#2c2c2e] transition-colors cursor-pointer" vid="17">
+                <i data-lucide="nut" class="w-5 h-5" vid="18"></i>
+            </div>
+        </div>
+
+        <div class="flex gap-3 overflow-x-auto no-scrollbar pb-2 pl-1" vid="19">
+            <button class="flex items-center justify-center px-6 py-2 rounded-full bg-white text-black text-xs font-bold shadow-sm hover:scale-105 transition-transform" vid="20">
+                All
+            </button>
+            <button class="flex items-center gap-2 px-6 py-2 rounded-full bg-[#1c1c1e] text-gray-400 text-xs font-bold hover:text-white hover:bg-[#2c2c2e] transition-all border border-transparent" vid="21">
+                Parties
+            </button>
+            <button class="flex items-center gap-2 px-6 py-2 rounded-full bg-[#1c1c1e] text-gray-400 text-xs font-bold hover:text-white hover:bg-[#2c2c2e] transition-all border border-transparent" vid="22">
+                Bars
+            </button>
+            <button class="flex items-center gap-2 px-6 py-2 rounded-full bg-[#1c1c1e] text-gray-400 text-xs font-bold hover:text-white hover:bg-[#2c2c2e] transition-all border border-transparent" vid="23">
+                Shows
+            </button>
+        </div>
+    </div>
+
+    <div class="flex-1 relative overflow-hidden bg-[#020202]" vid="24">
+        <div class="absolute inset-0 w-full h-full map-grid" vid="25">
+            <svg class="absolute inset-0 w-full h-full pointer-events-none" style="fill: none;" vid="26">
+                <path class="street-line" d="M-10 120 C 100 140, 200 100, 450 170" vid="27"></path>
+                <path class="street-line" d="M-10 320 C 150 300, 250 340, 450 310" vid="28"></path>
+                <path class="street-line" d="M-10 520 C 120 500, 300 540, 450 520" vid="29"></path>
+                <path class="street-line" d="M120 -10 L 140 900" vid="30"></path>
+                <path class="street-line" d="M300 -10 L 280 900" vid="31"></path>
+            </svg>
+
+            <div class="absolute top-[25%] left-[45%] transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center z-30" vid="32">
+                <div class="absolute w-28 h-28 rounded-full border border-white/5 pointer-events-none" vid="33"></div>
+                <div class="relative w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(255,255,255,0.25)] cursor-pointer pulse-ring-subtle" vid="34">
+                    <span class="text-black font-display font-bold text-2xl tracking-tight mt-[1px]" vid="35">87</span>
+                </div>
+                <div class="mt-3 bg-black/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-white/15 flex items-center shadow-lg" vid="36">
+                    <span class="text-[10px] font-bold text-white tracking-wide font-sans" vid="37">Sigma House</span>
+                </div>
+            </div>
+
+            <div class="absolute top-[32%] left-[75%] transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center z-20" vid="38">
+                <div class="relative w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.1)] cursor-pointer group" vid="39">
+                    <span class="text-black font-display font-bold text-lg mt-[1px]" vid="40">41</span>
+                </div>
+                <div class="mt-2 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/15" vid="41">
+                    <span class="text-[9px] font-bold text-gray-200 tracking-wide font-sans" vid="42">Dinkytown</span>
+                </div>
+            </div>
+
+            <div class="absolute top-[38%] left-[20%] transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center z-20" vid="43">
+                <div class="relative w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.1)] cursor-pointer group" vid="44">
+                    <span class="text-black font-display font-bold text-lg mt-[1px]" vid="45">33</span>
+                </div>
+                <div class="mt-2 bg-black/90 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/15" vid="46">
+                    <span class="text-[9px] font-bold text-gray-200 tracking-wide font-sans" vid="47">Rooftop</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="absolute bottom-0 left-0 w-full h-[52%] flex flex-col z-30 pointer-events-none" vid="48">
+            <div class="absolute -top-6 right-6 pointer-events-auto" vid="49">
+                <button class="bg-white text-black h-12 w-12 rounded-full shadow-[0_4px_20px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center hover:scale-105 transition-transform" vid="50">
+                    <i data-lucide="plus" class="w-6 h-6 stroke-[2.5]" vid="51"></i>
+                </button>
+            </div>
+
+            <div class="mt-auto h-full bg-[#0a0a0a] rounded-t-[32px] pt-4 px-4 pointer-events-auto relative shadow-[0_-10px_40px_rgba(0,0,0,0.7)] flex flex-col border-t border-white/5" vid="52">
+                
+                <div class="w-24 h-1.5 frosted-handle rounded-full mx-auto mb-8 border border-white/5" vid="53"></div>
+
+                <div class="flex items-center justify-between gap-2 mb-4 px-2" vid="54">
+                    <h2 class="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase font-mono-custom" vid="55">Nearby Los</h2>
+                    <span class="text-[8px] font-mono-custom text-gray-700" vid="56">LIVE_DATA</span>
+                </div>
+
+                <div class="flex-1 overflow-y-auto no-scrollbar pb-32" vid="57">
+                    <div class="group w-full bg-[#161616] rounded-2xl p-4 mb-3 flex items-center justify-between border border-white/5 hover:border-white/10 transition-all cursor-pointer" vid="58">
+                        <div class="flex items-center gap-4" vid="59">
+                            <div class="w-2 h-2 rounded-full bg-gray-400" vid="60"></div>
+                            <div vid="61">
+                                <h3 class="font-bold text-[15px] text-white tracking-tight leading-snug" vid="62">Sigma Chi Kickback</h3>
+                                <div class="flex items-center gap-2 text-[11px] text-gray-500 font-mono-custom mt-1" vid="63">
+                                    <span vid="64">301 SE 17th Ave</span>
+                                    <span class="text-gray-700 text-[8px]" vid="65">::</span>
+                                    <span vid="66">0.3 mi</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end" vid="67">
+                            <span class="text-2xl font-display font-bold text-white tracking-tight" vid="68">87</span>
+                            <span class="text-[9px] font-bold text-gray-600 font-mono-custom uppercase tracking-wider mt-0.5" vid="69">Active</span>
+                        </div>
+                    </div>
+
+                    <div class="group w-full bg-[#161616] rounded-2xl p-4 mb-3 flex items-center justify-between border border-white/5 hover:border-white/10 transition-all cursor-pointer" vid="70">
+                        <div class="flex items-center gap-4" vid="71">
+                            <div class="w-2 h-2 rounded-full bg-gray-600" vid="72"></div>
+                            <div vid="73">
+                                <h3 class="font-bold text-[15px] text-white tracking-tight leading-snug" vid="74">Dinkytown Bar Crawl</h3>
+                                <div class="flex items-center gap-2 text-[11px] text-gray-500 font-mono-custom mt-1" vid="75">
+                                    <span vid="76">Stadium Village</span>
+                                    <span class="text-gray-700 text-[8px]" vid="77">::</span>
+                                    <span vid="78">0.8 mi</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end" vid="79">
+                            <span class="text-2xl font-display font-bold text-white tracking-tight" vid="80">41</span>
+                            <span class="text-[9px] font-bold text-gray-600 font-mono-custom uppercase tracking-wider mt-0.5" vid="81">Active</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    
+    <div class="absolute bottom-0 w-full px-0 h-[72px] bg-black border-t border-white/5 z-50 nav-shadow" vid="82">
+        <div class="relative flex items-center justify-between px-8 h-full" vid="83">
+            <button class="flex flex-col items-center gap-1.5 w-12 group" vid="84">
+                <i data-lucide="map" class="w-[22px] h-[22px] text-[#38bdf8] stroke-[2]" vid="85"></i>
+                <span class="text-[8px] font-bold tracking-widest text-[#38bdf8] uppercase font-mono-custom" vid="86">Map</span>
+            </button>
+
+            <button class="flex flex-col items-center gap-1.5 w-12 group" vid="87">
+                <i data-lucide="rss" class="w-[22px] h-[22px] text-gray-500 stroke-[2] group-hover:text-white transition-colors" vid="88"></i>
+                <span class="text-[8px] font-bold tracking-widest text-gray-500 uppercase font-mono-custom group-hover:text-white transition-colors" vid="89">Feed</span>
+            </button>
+
+            <div class="relative w-16 flex justify-center" vid="90">
+                <button class="absolute -top-8 w-16 h-16 rounded-full bg-white flex flex-col items-center justify-center shadow-[0_0_25px_rgba(255,255,255,0.3)] hover:scale-105 transition-transform group border-[5px] border-black" vid="91">
+                    <i data-lucide="map-pin" class="w-6 h-6 text-black fill-black mb-0.5" vid="92"></i>
+                    <span class="text-[8px] font-black tracking-wider text-black uppercase font-mono-custom" vid="93">Drop</span>
+                </button>
+            </div>
+
+            <button class="flex flex-col items-center gap-1.5 w-12 group" vid="94">
+                <i data-lucide="search" class="w-[22px] h-[22px] text-gray-500 stroke-[2] group-hover:text-white transition-colors" vid="95"></i>
+                <span class="text-[8px] font-bold tracking-widest text-gray-500 uppercase font-mono-custom group-hover:text-white transition-colors" vid="96">Exp</span>
+            </button>
+
+            <button class="flex flex-col items-center gap-1.5 w-12 group" vid="97">
+                <i data-lucide="user" class="w-[22px] h-[22px] text-gray-500 stroke-[2] group-hover:text-white transition-colors" vid="98"></i>
+                <span class="text-[8px] font-bold tracking-widest text-gray-500 uppercase font-mono-custom group-hover:text-white transition-colors" vid="99">Me</span>
+            </button>
+        </div>
+    </div>
+
+    <script vid="100">
+        lucide.createIcons();
+    </script>
+</body></html>
