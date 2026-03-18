@@ -1,0 +1,95 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+concurrency:
+  group: backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Build · Vet · Lint · Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: thelo
+          POSTGRES_PASSWORD: thelo_test
+          POSTGRES_DB: thelo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U thelo"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgres://thelo:thelo_test@localhost:5432/thelo_test?sslmode=disable
+      JWT_SECRET: ci-test-secret-do-not-use-in-production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: backend/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: Lint (staticcheck)
+        run: staticcheck ./...
+
+      - name: Run migrations
+        run: |
+          for f in migrations/*.sql; do
+            PGPASSWORD=thelo_test psql -h localhost -U thelo -d thelo_test -f "$f"
+          done
+
+      - name: Test
+        run: go test -race -timeout 60s ./...
+
+      - name: Add CI summary
+        if: success()
+        run: |
+          {
+            echo "## Backend CI Passed";
+            echo "";
+            echo "- Trigger: \`${{ github.event_name }}\`";
+            echo "- Ref: \`${{ github.ref_name }}\`";
+            echo "- Go: \`1.22\`";
+            echo "- Checks: \`build\`, \`vet\`, \`staticcheck\`, \`test -race\`";
+          } >> "$GITHUB_STEP_SUMMARY"
