@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Linking,
   Modal,
   SafeAreaView,
@@ -304,43 +305,59 @@ async function searchLocalPlace(
     `radius=${Math.round(SEARCH_RADIUS_METERS)}&` +
     `key=${encodeURIComponent(googleMapsApiKey)}`;
 
-  const response = await fetch(endpoint);
-  const data = await response.json();
-  const results = Array.isArray(data?.results) ? data.results : [];
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-  const localCandidates = results
-    .map((result: any) => {
-      const lat = result?.geometry?.location?.lat;
-      const lng = result?.geometry?.location?.lng;
-      if (typeof lat !== "number" || typeof lng !== "number") return null;
+  try {
+    const response = await fetch(endpoint, { signal: controller.signal });
+    if (!response.ok) return [];
 
-      const distanceMeters = getDistanceMeters(
-        CAMPUS_CENTER_LATITUDE,
-        CAMPUS_CENTER_LONGITUDE,
-        lat,
-        lng
-      );
+    const data = await response.json().catch(() => null);
+    const status = (data as any)?.status;
+    if (typeof status === "string" && status !== "OK" && status !== "ZERO_RESULTS") {
+      return [];
+    }
 
-      return {
-        name: result?.name || "UNTITLED",
-        address: result?.formatted_address || "Address unavailable",
-        lat,
-        lng,
-        types: Array.isArray(result?.types) ? result.types : [],
-        distanceMeters
-      };
-    })
-    .filter((candidate: any) => candidate && candidate.distanceMeters <= SEARCH_RADIUS_METERS)
-    .map((candidate: PlaceSearchBaseCandidate) => ({
-      ...candidate,
-      score: scorePlaceMatch(queryText, candidate)
-    }))
-    .sort((a: PlaceSearchCandidate, b: PlaceSearchCandidate) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.distanceMeters - b.distanceMeters;
-    });
+    const results = Array.isArray((data as any)?.results) ? (data as any).results : [];
 
-  return localCandidates;
+    const localCandidates = results
+      .map((result: any) => {
+        const lat = result?.geometry?.location?.lat;
+        const lng = result?.geometry?.location?.lng;
+        if (typeof lat !== "number" || typeof lng !== "number") return null;
+
+        const distanceMeters = getDistanceMeters(
+          CAMPUS_CENTER_LATITUDE,
+          CAMPUS_CENTER_LONGITUDE,
+          lat,
+          lng
+        );
+
+        return {
+          name: result?.name || "UNTITLED",
+          address: result?.formatted_address || "Address unavailable",
+          lat,
+          lng,
+          types: Array.isArray(result?.types) ? result.types : [],
+          distanceMeters
+        };
+      })
+      .filter((candidate: any) => candidate && candidate.distanceMeters <= SEARCH_RADIUS_METERS)
+      .map((candidate: PlaceSearchBaseCandidate) => ({
+        ...candidate,
+        score: scorePlaceMatch(queryText, candidate)
+      }))
+      .sort((a: PlaceSearchCandidate, b: PlaceSearchCandidate) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.distanceMeters - b.distanceMeters;
+      });
+
+    return localCandidates;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function buildMapHtml(googleMapsApiKey: string): string {
@@ -494,6 +511,80 @@ function buildMapHtml(googleMapsApiKey: string): string {
           }
         };
 
+        function clearAllUserMarkers() {
+          Object.keys(markerRegistry).forEach(function(id) {
+            const markerEntry = markerRegistry[id];
+            if (markerEntry && markerEntry.marker) {
+              markerEntry.marker.setMap(null);
+            }
+            delete markerRegistry[id];
+          });
+          selectedMarkerId = null;
+        }
+
+        function handleNativeMessage(event) {
+          try {
+            const rawData = event && event.data;
+            const message =
+              typeof rawData === "string"
+                ? JSON.parse(rawData)
+                : rawData && typeof rawData === "object"
+                  ? rawData
+                  : null;
+            if (!message || !message.type) return;
+
+            if (message.type === "add_marker") {
+              if (message.payload) {
+                addUserMarker(message.payload, false);
+              }
+              return;
+            }
+
+            if (message.type === "sync_markers") {
+              const markers = message.payload && message.payload.markers;
+              if (!Array.isArray(markers)) return;
+              clearAllUserMarkers();
+              for (let i = 0; i < markers.length; i += 1) {
+                addUserMarker(markers[i], false);
+              }
+              return;
+            }
+
+            if (message.type === "update_marker") {
+              if (message.payload) {
+                window.updateMarkerFromNative(message.payload);
+              }
+              return;
+            }
+
+            if (message.type === "remove_marker") {
+              const markerId = message.payload && message.payload.markerId;
+              window.removeMarkerFromNative(markerId);
+              return;
+            }
+
+            if (message.type === "set_selected_marker") {
+              const markerId = message.payload && message.payload.markerId;
+              setMarkerSelectedVisual(markerId);
+              return;
+            }
+
+            if (message.type === "map_control") {
+              const action = message.payload && message.payload.action;
+              if (window.mapControl && typeof window.mapControl[action] === "function") {
+                window.mapControl[action]();
+              }
+              return;
+            }
+          } catch {
+            // Ignore malformed messages.
+          }
+        }
+
+        // Android uses document; iOS uses window.
+        document.addEventListener("message", handleNativeMessage);
+        window.addEventListener("message", handleNativeMessage);
+
         map.addListener("click", function(event) {
           const lat = event.latLng.lat();
           const lng = event.latLng.lng();
@@ -556,6 +647,374 @@ function buildMapHtml(googleMapsApiKey: string): string {
 `;
 }
 
+type EventDetailSheetProps = {
+  marker: LiveMarker;
+  eventDescriptionDraft: string;
+  onChangeEventDescriptionDraft: (next: string) => void;
+  onClose: () => void;
+  onOpenMarkerAddress: (marker: LiveMarker) => void;
+  onSaveDescription: () => void;
+  onToggleLike: () => void;
+  onToggleNotifications: () => void;
+  onUploadVideo: () => void;
+  onDelete: () => void;
+};
+
+const EventDetailSheet = memo(function EventDetailSheet({
+  marker,
+  eventDescriptionDraft,
+  onChangeEventDescriptionDraft,
+  onClose,
+  onOpenMarkerAddress,
+  onSaveDescription,
+  onToggleLike,
+  onToggleNotifications,
+  onUploadVideo,
+  onDelete
+}: EventDetailSheetProps) {
+  return (
+    <View style={styles.eventDetailSheet}>
+      <View style={styles.eventDetailHandle} />
+      <ScrollView
+        style={styles.eventDetailScroll}
+        showsVerticalScrollIndicator={false}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.mapSignalPreviewHeader}>
+          <Text accessibilityRole="header" style={styles.mapSignalPreviewLabel}>
+            EVENT DETAILS
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Close event details"
+            hitSlop={12}
+            onPress={onClose}
+            style={styles.mapSignalPreviewCloseButton}
+          >
+            <Text style={styles.mapSignalPreviewCloseText}>×</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.mapSignalPreviewName}>{marker.name}</Text>
+        <View style={styles.eventMetaRow}>
+          <Ionicons name="time-outline" size={14} color="#ffffff" />
+          <Text style={styles.eventDetailMeta}>{formatEventDateTime(marker.eventDateTimeIso)}</Text>
+        </View>
+        <Text style={styles.eventDetailCategory}>{marker.eventCategory}</Text>
+        <View style={styles.eventMetaRow}>
+          <Ionicons name="location-outline" size={14} color="#ffffff" />
+          <Text style={styles.eventDetailVenue}>{marker.venueName}</Text>
+        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Open address in maps"
+          onPress={() => {
+            onOpenMarkerAddress(marker);
+          }}
+          style={styles.eventDirectionsRow}
+        >
+          <Ionicons name="map-outline" size={14} color="#ffffff" />
+          <Text style={styles.mapSignalPreviewAddress} numberOfLines={2}>
+            {marker.address}
+          </Text>
+        </TouchableOpacity>
+
+        <Text style={styles.eventDetailLabel}>WHAT'S HAPPENING</Text>
+        <TextInput
+          accessibilityLabel="Event description"
+          value={eventDescriptionDraft}
+          onChangeText={onChangeEventDescriptionDraft}
+          style={styles.eventDescriptionInput}
+          placeholder="Describe the vibe..."
+          placeholderTextColor="#6b7280"
+          multiline
+        />
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Save description"
+          style={styles.eventActionButton}
+          onPress={onSaveDescription}
+        >
+          <Text style={styles.eventActionButtonText}>SAVE DESCRIPTION</Text>
+        </TouchableOpacity>
+
+        <View style={styles.eventCountersRow}>
+          <View style={styles.eventCounterPill}>
+            <Ionicons name="eye-outline" size={14} color="#ffffff" />
+            <Text style={styles.eventCounterText}>{marker.eyeCount}</Text>
+          </View>
+          <View style={styles.eventCounterPill}>
+            <MaterialCommunityIcons name="cursor-default-click-outline" size={14} color="#ffffff" />
+            <Text style={styles.eventCounterText}>{marker.clickCount}</Text>
+          </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={marker.isLikedByViewer ? "Unlike event" : "Like event"}
+            style={styles.eventCounterPill}
+            onPress={onToggleLike}
+          >
+            <Ionicons name={marker.isLikedByViewer ? "heart" : "heart-outline"} size={14} color="#ffffff" />
+            <Text style={styles.eventCounterText}>{marker.heartCount}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={
+              marker.notificationsEnabled
+                ? "Disable notifications for this event"
+                : "Enable notifications for this event"
+            }
+            style={styles.eventCounterPill}
+            onPress={onToggleNotifications}
+          >
+            <Ionicons
+              name={marker.notificationsEnabled ? "notifications-outline" : "notifications-off-outline"}
+              size={14}
+              color="#ffffff"
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.eventMediaSection}>
+          <View style={styles.eventMediaHeader}>
+            <View style={styles.eventMediaTitleWrap}>
+              <Ionicons name="film-outline" size={14} color="#ffffff" />
+              <Text style={styles.eventMediaTitle}>VIDEOS</Text>
+            </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Add video"
+              style={styles.eventUploadButton}
+              onPress={onUploadVideo}
+            >
+              <View style={styles.eventUploadContent}>
+                <Ionicons name="camera-outline" size={13} color="#ffffff" />
+                <Text style={styles.eventUploadButtonText}>ADD VIDEO</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+          {marker.mediaUrls.length === 0 ? (
+            <Text style={styles.eventMediaEmpty}>No clips yet. Add one from your camera roll.</Text>
+          ) : (
+            marker.mediaUrls.map((mediaUrl, index) => (
+              <TouchableOpacity
+                key={`${mediaUrl}_${index}`}
+                accessibilityRole="button"
+                accessibilityLabel="Open media"
+                style={styles.eventMediaItem}
+                onPress={() => {
+                  void Linking.openURL(mediaUrl);
+                }}
+              >
+                {isLikelyImageUrl(mediaUrl) ? (
+                  <Image source={{ uri: mediaUrl }} style={styles.eventMediaPreviewImage} />
+                ) : (
+                  <Ionicons name="image-outline" size={13} color="#ffffff" />
+                )}
+                <Text style={styles.eventMediaItemText} numberOfLines={1}>
+                  {isLikelyImageUrl(mediaUrl) ? "VIEW EVENT IMAGE" : mediaUrl}
+                </Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Delete event"
+          style={styles.eventDeleteButton}
+          onPress={onDelete}
+        >
+          <Feather name="trash-2" size={14} color="#ffffff" />
+          <Text style={styles.eventDeleteButtonText}>DELETE EVENT</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+});
+
+type LiveSignalsSheetProps = {
+  markers: LiveMarker[];
+  onOpenEventDetails: (markerId: string) => void;
+  onOpenMarkerAddress: (marker: LiveMarker) => void;
+};
+
+const LiveSignalsSheet = memo(function LiveSignalsSheet({
+  markers,
+  onOpenEventDetails,
+  onOpenMarkerAddress
+}: LiveSignalsSheetProps) {
+  return (
+    <View style={styles.sheet}>
+      <Text accessibilityRole="header" style={styles.sectionLabel}>
+        LIVE SIGNALS
+      </Text>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardDismissMode="on-drag">
+        {markers.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>NO MARKERS YET</Text>
+            <Text style={styles.cardMeta}>TAP THE MAP TO ADD A MARKER.</Text>
+          </View>
+        ) : (
+          markers.map((marker) => (
+            <View key={marker.id} style={styles.card}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="View event details"
+                onPress={() => {
+                  onOpenEventDetails(marker.id);
+                }}
+              >
+                <Text style={styles.cardTitle}>{marker.name.toUpperCase()}</Text>
+                <Text style={styles.cardMetaAction}>VIEW EVENT DETAILS</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Open address in maps"
+                onPress={() => {
+                  onOpenMarkerAddress(marker);
+                }}
+              >
+                <Text style={[styles.cardMeta, styles.cardAddressLink]}>{marker.address}</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
+      </ScrollView>
+    </View>
+  );
+});
+
+type MapOverlayControlsProps = {
+  isMapControlsExpanded: boolean;
+  isMapFullScreen: boolean;
+  onOpenAddMarker: () => void;
+  onToggleControlsExpanded: () => void;
+  onMapControl: (action: string) => void;
+  onExitFullMap: () => void;
+};
+
+const MapOverlayControls = memo(function MapOverlayControls({
+  isMapControlsExpanded,
+  isMapFullScreen,
+  onOpenAddMarker,
+  onToggleControlsExpanded,
+  onMapControl,
+  onExitFullMap
+}: MapOverlayControlsProps) {
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Add a marker"
+        hitSlop={10}
+        style={({ pressed }) => [styles.leftMarkerButton, pressed && styles.controlButtonPressed]}
+        onPress={onOpenAddMarker}
+      >
+        <Text style={styles.leftMarkerButtonText}>+</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={isMapControlsExpanded ? "Hide map controls" : "Show map controls"}
+        hitSlop={10}
+        style={({ pressed }) => [styles.leftControlsToggleButton, pressed && styles.controlButtonPressed]}
+        onPress={onToggleControlsExpanded}
+      >
+        <Text style={styles.leftControlsToggleButtonText}>
+          {isMapControlsExpanded ? "×" : "◎"}
+        </Text>
+      </Pressable>
+
+      {isMapControlsExpanded ? (
+        <View style={styles.leftControlsPanel}>
+          <View style={styles.leftControlsRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom in"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("zoomIn")}
+            >
+              <Text style={styles.leftControlButtonText}>+</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom out"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("zoomOut")}
+            >
+              <Text style={styles.leftControlButtonText}>-</Text>
+            </Pressable>
+          </View>
+          <View style={styles.leftControlsRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Pan up"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("panUp")}
+            >
+              <Text style={styles.leftControlButtonText}>↑</Text>
+            </Pressable>
+          </View>
+          <View style={styles.leftControlsRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Pan left"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("panLeft")}
+            >
+              <Text style={styles.leftControlButtonText}>←</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Recenter map"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("recenter")}
+            >
+              <Text style={styles.leftControlButtonText}>◎</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Pan right"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("panRight")}
+            >
+              <Text style={styles.leftControlButtonText}>→</Text>
+            </Pressable>
+          </View>
+          <View style={styles.leftControlsRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Pan down"
+              hitSlop={10}
+              style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
+              onPress={() => onMapControl("panDown")}
+            >
+              <Text style={styles.leftControlButtonText}>↓</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {isMapFullScreen ? (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Exit full map"
+          style={styles.fullScreenExitButton}
+          onPress={onExitFullMap}
+        >
+          <Text style={styles.fullScreenExitButtonText}>EXIT FULL MAP</Text>
+        </TouchableOpacity>
+      ) : null}
+    </>
+  );
+});
+
 export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   const [liveMarkers, setLiveMarkers] = useState<LiveMarker[]>([]);
   const [viewerId, setViewerId] = useState("");
@@ -576,7 +1035,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     address: string;
   } | null>(null);
   const mapWebViewRef = useRef<WebView>(null);
-  const mapHtml = buildMapHtml(googleMapsApiKey);
+  const mapHtml = useMemo(() => buildMapHtml(googleMapsApiKey), [googleMapsApiKey]);
 
   const handleOpenMarkerAddress = useCallback(async (marker: LiveMarker) => {
     const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${marker.lat},${marker.lng}`;
@@ -585,12 +1044,12 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
 
   const handleMapControl = useCallback((action: string) => {
     const safeAction = action.replace(/[^a-zA-Z]/g, "");
-    mapWebViewRef.current?.injectJavaScript(`
-      if (window.mapControl && window.mapControl.${safeAction}) {
-        window.mapControl.${safeAction}();
-      }
-      true;
-    `);
+    mapWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "map_control",
+        payload: { action: safeAction }
+      })
+    );
   }, []);
 
   const persistMarkers = useCallback(async (markers: LiveMarker[]) => {
@@ -598,32 +1057,21 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   }, []);
 
   const syncMarkersToMap = useCallback((markers: LiveMarker[]) => {
-    const markersJson = JSON.stringify(markers)
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'");
-
-    mapWebViewRef.current?.injectJavaScript(`
-      if (Array.isArray(JSON.parse('${markersJson}')) && window.addMarkerFromNative) {
-        const markerList = JSON.parse('${markersJson}');
-        for (let i = 0; i < markerList.length; i += 1) {
-          window.addMarkerFromNative(markerList[i]);
-        }
-      }
-      true;
-    `);
+    mapWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "sync_markers",
+        payload: { markers }
+      })
+    );
   }, []);
 
   const syncMarkerUpdateToMap = useCallback((marker: LiveMarker) => {
-    const markerJson = JSON.stringify(marker)
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'");
-
-    mapWebViewRef.current?.injectJavaScript(`
-      if (window.updateMarkerFromNative) {
-        window.updateMarkerFromNative(JSON.parse('${markerJson}'));
-      }
-      true;
-    `);
+    mapWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "update_marker",
+        payload: marker
+      })
+    );
   }, []);
 
   useEffect(() => {
@@ -669,18 +1117,22 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
   }, [isMapWebViewReady, syncMarkersToMap]);
 
   useEffect(() => {
+    if (!isMapWebViewReady) return;
+    syncMarkersToMap(liveMarkers);
+  }, [isMapWebViewReady, liveMarkers, syncMarkersToMap]);
+
+  useEffect(() => {
     setEventDescriptionDraft(selectedMapSignal?.description ?? "");
   }, [selectedMapSignal]);
 
   useEffect(() => {
     const selectedId = selectedMapSignal?.id ?? "";
-    const selectedIdLiteral = selectedId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-    mapWebViewRef.current?.injectJavaScript(`
-      if (window.setSelectedMarkerFromNative) {
-        window.setSelectedMarkerFromNative('${selectedIdLiteral}' || null);
-      }
-      true;
-    `);
+    mapWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "set_selected_marker",
+        payload: { markerId: selectedId || null }
+      })
+    );
   }, [selectedMapSignal?.id]);
 
   const handleMapMessage = useCallback((event: WebViewMessageEvent) => {
@@ -745,17 +1197,12 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
       void persistMarkers(next);
       return next;
     });
-
-    const markerJson = JSON.stringify(marker)
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'");
-
-    mapWebViewRef.current?.injectJavaScript(`
-      if (window.addMarkerFromNative) {
-        window.addMarkerFromNative(JSON.parse('${markerJson}'));
-      }
-      true;
-    `);
+    mapWebViewRef.current?.postMessage(
+      JSON.stringify({
+        type: "add_marker",
+        payload: marker
+      })
+    );
   }, [persistMarkers]);
 
   const updateMarkerById = useCallback((markerId: string, updater: (marker: LiveMarker) => LiveMarker) => {
@@ -834,20 +1281,27 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     if (!selectedMapSignal) return;
     const markerId = selectedMapSignal.id;
 
-    setLiveMarkers((prev) => {
-      const next = prev.filter((marker) => marker.id !== markerId);
-      void persistMarkers(next);
-      return next;
-    });
-    setSelectedMapSignal(null);
-
-    const markerIdLiteral = markerId.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-    mapWebViewRef.current?.injectJavaScript(`
-      if (window.removeMarkerFromNative) {
-        window.removeMarkerFromNative('${markerIdLiteral}');
+    Alert.alert("Delete event?", "This can’t be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          setLiveMarkers((prev) => {
+            const next = prev.filter((marker) => marker.id !== markerId);
+            void persistMarkers(next);
+            return next;
+          });
+          setSelectedMapSignal(null);
+          mapWebViewRef.current?.postMessage(
+            JSON.stringify({
+              type: "remove_marker",
+              payload: { markerId }
+            })
+          );
+        }
       }
-      true;
-    `);
+    ]);
   }, [persistMarkers, selectedMapSignal]);
 
   const handleOpenEventDetailsFromLiveSignal = useCallback((markerId: string) => {
@@ -890,7 +1344,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
 
       if (candidates.length === 0) {
         setLocalSearchMessage(
-          `NO LOCAL MATCH FOUND WITHIN ${SEARCH_RADIUS_MILES} MILES.`
+          `NO MATCH FOUND. IF THIS SEEMS WRONG, YOUR PLACES API MAY BE BLOCKED BY KEY RESTRICTIONS.`
         );
         return;
       }
@@ -934,13 +1388,39 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
     handleCancelTapMarkerModal();
   }, [addMarkerToListAndMap, handleCancelTapMarkerModal, pendingMapTapMarker, tapMarkerNameInput]);
 
+  const handleCloseEventDetails = useCallback(() => {
+    setSelectedMapSignal(null);
+  }, []);
+
+  const handleOpenAddMarkerModal = useCallback(() => {
+    setLocalSearchMessage("");
+    setSelectedMapSignal(null);
+    setIsManualMarkerModalVisible(true);
+  }, []);
+
+  const handleToggleMapControlsExpanded = useCallback(() => {
+    setIsMapControlsExpanded((prev) => !prev);
+  }, []);
+
+  const handleExitFullMap = useCallback(() => {
+    setIsMapFullScreen(false);
+  }, []);
+
+  const handleUploadVideoFromSheet = useCallback(() => {
+    void handleUploadVideoToSelectedMarker();
+  }, [handleUploadVideoToSelectedMarker]);
+
   return (
     <SafeAreaView style={styles.screen}>
       {!isMapFullScreen ? (
         <View style={styles.header}>
-          <Text style={styles.wordmark}>THE LO</Text>
+          <Text accessibilityRole="header" style={styles.wordmark}>
+            THE LO
+          </Text>
           <View style={styles.headerActions}>
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Open full map"
               onPress={() => setIsMapFullScreen(true)}
               style={styles.headerButton}
             >
@@ -949,7 +1429,12 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
                 <Text style={styles.headerButtonText}>FULL MAP</Text>
               </View>
             </TouchableOpacity>
-            <TouchableOpacity onPress={onSignOut} style={styles.headerButton}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+              onPress={onSignOut}
+              style={styles.headerButton}
+            >
               <View style={styles.headerButtonContent}>
                 <Ionicons name="log-out-outline" size={14} color="#ffffff" />
                 <Text style={styles.headerButtonText}>SIGN OUT</Text>
@@ -974,250 +1459,44 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             }
           }}
         />
+        {!isMapWebViewReady ? (
+          <View style={styles.mapLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator color="#ffffff" />
+          </View>
+        ) : null}
         {selectedMapSignal ? (
           <BlurView intensity={26} tint="dark" style={styles.eventDetailBackdrop} />
         ) : null}
-        <Pressable
-          style={({ pressed }) => [styles.leftMarkerButton, pressed && styles.controlButtonPressed]}
-          onPress={() => {
-            setLocalSearchMessage("");
-            setSelectedMapSignal(null);
-            setIsManualMarkerModalVisible(true);
-          }}
-        >
-          <Text style={styles.leftMarkerButtonText}>+</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [styles.leftControlsToggleButton, pressed && styles.controlButtonPressed]}
-          onPress={() => setIsMapControlsExpanded((prev) => !prev)}
-        >
-          <Text style={styles.leftControlsToggleButtonText}>
-            {isMapControlsExpanded ? "×" : "◎"}
-          </Text>
-        </Pressable>
-        {isMapControlsExpanded ? (
-          <View style={styles.leftControlsPanel}>
-            <View style={styles.leftControlsRow}>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("zoomIn")}
-              >
-                <Text style={styles.leftControlButtonText}>+</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("zoomOut")}
-              >
-                <Text style={styles.leftControlButtonText}>-</Text>
-              </Pressable>
-            </View>
-            <View style={styles.leftControlsRow}>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("panUp")}
-              >
-                <Text style={styles.leftControlButtonText}>↑</Text>
-              </Pressable>
-            </View>
-            <View style={styles.leftControlsRow}>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("panLeft")}
-              >
-                <Text style={styles.leftControlButtonText}>←</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("recenter")}
-              >
-                <Text style={styles.leftControlButtonText}>◎</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("panRight")}
-              >
-                <Text style={styles.leftControlButtonText}>→</Text>
-              </Pressable>
-            </View>
-            <View style={styles.leftControlsRow}>
-              <Pressable
-                style={({ pressed }) => [styles.leftControlButton, pressed && styles.controlButtonPressed]}
-                onPress={() => handleMapControl("panDown")}
-              >
-                <Text style={styles.leftControlButtonText}>↓</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-        {isMapFullScreen ? (
-          <TouchableOpacity
-            style={styles.fullScreenExitButton}
-            onPress={() => setIsMapFullScreen(false)}
-          >
-            <Text style={styles.fullScreenExitButtonText}>EXIT FULL MAP</Text>
-          </TouchableOpacity>
-        ) : null}
+        <MapOverlayControls
+          isMapControlsExpanded={isMapControlsExpanded}
+          isMapFullScreen={isMapFullScreen}
+          onOpenAddMarker={handleOpenAddMarkerModal}
+          onToggleControlsExpanded={handleToggleMapControlsExpanded}
+          onMapControl={handleMapControl}
+          onExitFullMap={handleExitFullMap}
+        />
         {selectedMapSignal ? (
-          <View style={styles.eventDetailSheet}>
-            <View style={styles.eventDetailHandle} />
-            <ScrollView style={styles.eventDetailScroll} showsVerticalScrollIndicator={false}>
-              <View style={styles.mapSignalPreviewHeader}>
-                <Text style={styles.mapSignalPreviewLabel}>EVENT DETAILS</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setSelectedMapSignal(null);
-                  }}
-                  style={styles.mapSignalPreviewCloseButton}
-                >
-                  <Text style={styles.mapSignalPreviewCloseText}>×</Text>
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.mapSignalPreviewName}>{selectedMapSignal.name}</Text>
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="time-outline" size={14} color="#ffffff" />
-                <Text style={styles.eventDetailMeta}>
-                  {formatEventDateTime(selectedMapSignal.eventDateTimeIso)}
-                </Text>
-              </View>
-              <Text style={styles.eventDetailCategory}>{selectedMapSignal.eventCategory}</Text>
-              <View style={styles.eventMetaRow}>
-                <Ionicons name="location-outline" size={14} color="#ffffff" />
-                <Text style={styles.eventDetailVenue}>{selectedMapSignal.venueName}</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => {
-                  void handleOpenMarkerAddress(selectedMapSignal);
-                }}
-                style={styles.eventDirectionsRow}
-              >
-                <Ionicons name="map-outline" size={14} color="#ffffff" />
-                <Text style={styles.mapSignalPreviewAddress} numberOfLines={2}>
-                  {selectedMapSignal.address}
-                </Text>
-              </TouchableOpacity>
-
-              <Text style={styles.eventDetailLabel}>WHAT'S HAPPENING</Text>
-              <TextInput
-                value={eventDescriptionDraft}
-                onChangeText={setEventDescriptionDraft}
-                style={styles.eventDescriptionInput}
-                placeholder="Describe the vibe..."
-                placeholderTextColor="#6b7280"
-                multiline
-              />
-              <TouchableOpacity style={styles.eventActionButton} onPress={handleSaveEventDescription}>
-                <Text style={styles.eventActionButtonText}>SAVE DESCRIPTION</Text>
-              </TouchableOpacity>
-
-              <View style={styles.eventCountersRow}>
-                <View style={styles.eventCounterPill}>
-                  <Ionicons name="eye-outline" size={14} color="#ffffff" />
-                  <Text style={styles.eventCounterText}>{selectedMapSignal.eyeCount}</Text>
-                </View>
-                <View style={styles.eventCounterPill}>
-                  <MaterialCommunityIcons name="cursor-default-click-outline" size={14} color="#ffffff" />
-                  <Text style={styles.eventCounterText}>{selectedMapSignal.clickCount}</Text>
-                </View>
-                <TouchableOpacity style={styles.eventCounterPill} onPress={handleToggleLikeSelectedEvent}>
-                  <Ionicons
-                    name={selectedMapSignal.isLikedByViewer ? "heart" : "heart-outline"}
-                    size={14}
-                    color="#ffffff"
-                  />
-                  <Text style={styles.eventCounterText}>{selectedMapSignal.heartCount}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.eventCounterPill} onPress={handleToggleNotificationSelectedEvent}>
-                  <Ionicons
-                    name={selectedMapSignal.notificationsEnabled ? "notifications-outline" : "notifications-off-outline"}
-                    size={14}
-                    color="#ffffff"
-                  />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.eventMediaSection}>
-                <View style={styles.eventMediaHeader}>
-                  <View style={styles.eventMediaTitleWrap}>
-                    <Ionicons name="film-outline" size={14} color="#ffffff" />
-                    <Text style={styles.eventMediaTitle}>VIDEOS</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.eventUploadButton}
-                    onPress={() => {
-                      void handleUploadVideoToSelectedMarker();
-                    }}
-                  >
-                    <View style={styles.eventUploadContent}>
-                      <Ionicons name="camera-outline" size={13} color="#ffffff" />
-                      <Text style={styles.eventUploadButtonText}>ADD VIDEO</Text>
-                    </View>
-                  </TouchableOpacity>
-                </View>
-                {selectedMapSignal.mediaUrls.length === 0 ? (
-                  <Text style={styles.eventMediaEmpty}>No clips yet. Add one from your camera roll.</Text>
-                ) : (
-                  selectedMapSignal.mediaUrls.map((mediaUrl) => (
-                    <TouchableOpacity
-                      key={mediaUrl}
-                      style={styles.eventMediaItem}
-                      onPress={() => {
-                        void Linking.openURL(mediaUrl);
-                      }}
-                    >
-                      {isLikelyImageUrl(mediaUrl) ? (
-                        <Image source={{ uri: mediaUrl }} style={styles.eventMediaPreviewImage} />
-                      ) : (
-                        <Ionicons name="image-outline" size={13} color="#ffffff" />
-                      )}
-                      <Text style={styles.eventMediaItemText} numberOfLines={1}>
-                        {isLikelyImageUrl(mediaUrl) ? "VIEW EVENT IMAGE" : mediaUrl}
-                      </Text>
-                    </TouchableOpacity>
-                  ))
-                )}
-              </View>
-              <TouchableOpacity style={styles.eventDeleteButton} onPress={handleDeleteSelectedEvent}>
-                <Feather name="trash-2" size={14} color="#ffffff" />
-                <Text style={styles.eventDeleteButtonText}>DELETE EVENT</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
+          <EventDetailSheet
+            marker={selectedMapSignal}
+            eventDescriptionDraft={eventDescriptionDraft}
+            onChangeEventDescriptionDraft={setEventDescriptionDraft}
+            onClose={handleCloseEventDetails}
+            onOpenMarkerAddress={handleOpenMarkerAddress}
+            onSaveDescription={handleSaveEventDescription}
+            onToggleLike={handleToggleLikeSelectedEvent}
+            onToggleNotifications={handleToggleNotificationSelectedEvent}
+            onUploadVideo={handleUploadVideoFromSheet}
+            onDelete={handleDeleteSelectedEvent}
+          />
         ) : null}
       </View>
 
       {!isMapFullScreen && !selectedMapSignal ? (
-        <View style={styles.sheet}>
-        <Text style={styles.sectionLabel}>LIVE SIGNALS</Text>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {liveMarkers.length === 0 ? (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>NO MARKERS YET</Text>
-              <Text style={styles.cardMeta}>TAP THE MAP TO ADD A MARKER.</Text>
-            </View>
-          ) : (
-            liveMarkers.map((marker) => (
-              <View key={marker.id} style={styles.card}>
-                <TouchableOpacity
-                  onPress={() => {
-                    handleOpenEventDetailsFromLiveSignal(marker.id);
-                  }}
-                >
-                <Text style={styles.cardTitle}>{marker.name.toUpperCase()}</Text>
-                <Text style={styles.cardMetaAction}>VIEW EVENT DETAILS</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    void handleOpenMarkerAddress(marker);
-                  }}
-                >
-                  <Text style={[styles.cardMeta, styles.cardAddressLink]}>{marker.address}</Text>
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
-        </ScrollView>
-        </View>
+        <LiveSignalsSheet
+          markers={liveMarkers}
+          onOpenEventDetails={handleOpenEventDetailsFromLiveSignal}
+          onOpenMarkerAddress={handleOpenMarkerAddress}
+        />
       ) : null}
 
       <Modal
@@ -1226,13 +1505,14 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
         visible={Boolean(pendingMapTapMarker)}
         onRequestClose={handleCancelTapMarkerModal}
       >
-        <View style={styles.modalBackdrop}>
+        <Pressable style={styles.modalBackdrop} onPress={Keyboard.dismiss}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>NAME THIS MARKER</Text>
             <Text style={styles.modalAddress} numberOfLines={2}>
               {pendingMapTapMarker?.address}
             </Text>
             <TextInput
+              accessibilityLabel="Marker name"
               value={tapMarkerNameInput}
               onChangeText={setTapMarkerNameInput}
               style={styles.modalInput}
@@ -1243,12 +1523,16 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             />
             <View style={styles.modalActions}>
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Cancel marker"
                 style={styles.modalCancelButton}
                 onPress={handleCancelTapMarkerModal}
               >
                 <Text style={styles.modalCancelButtonText}>CANCEL</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Add marker"
                 style={styles.modalConfirmButton}
                 onPress={handleConfirmTapMarkerModal}
               >
@@ -1256,7 +1540,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </Pressable>
       </Modal>
 
       <Modal
@@ -1265,10 +1549,11 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
         visible={isManualMarkerModalVisible}
         onRequestClose={() => setIsManualMarkerModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
+        <Pressable style={styles.modalBackdrop} onPress={Keyboard.dismiss}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>ADD MARKER BY ADDRESS</Text>
             <TextInput
+              accessibilityLabel="Marker name"
               value={newMarkerName}
               onChangeText={setNewMarkerName}
               style={styles.modalInput}
@@ -1277,6 +1562,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
               autoCapitalize="characters"
             />
             <TextInput
+              accessibilityLabel="Place or address"
               value={newMarkerAddress}
               onChangeText={setNewMarkerAddress}
               style={styles.modalInput}
@@ -1285,6 +1571,8 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
               autoCapitalize="none"
             />
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Search local area and add marker"
               style={[
                 styles.addMarkerButton,
                 (!newMarkerAddress.trim() || isAddingMarker) && styles.addMarkerButtonDisabled
@@ -1305,6 +1593,8 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
             ) : null}
             <View style={styles.modalActions}>
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Close add marker modal"
                 style={styles.modalCancelButton}
                 onPress={() => setIsManualMarkerModalVisible(false)}
               >
@@ -1312,7 +1602,7 @@ export function HomeScreen({ onSignOut, googleMapsApiKey }: HomeScreenProps) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </Pressable>
       </Modal>
     </SafeAreaView>
   );
@@ -1368,8 +1658,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 12,
     top: "45%",
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
@@ -1393,8 +1683,8 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 12,
     top: "45%",
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
@@ -1412,7 +1702,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 12,
     top: "45%",
-    marginTop: -166,
+    marginTop: -186,
     gap: 6
   },
   leftControlsRow: {
@@ -1421,8 +1711,8 @@ const styles = StyleSheet.create({
     justifyContent: "center"
   },
   leftControlButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
@@ -1501,9 +1791,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2
   },
   mapSignalPreviewCloseButton: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     alignItems: "center",
@@ -1514,7 +1804,8 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 12,
     fontWeight: "700",
-    lineHeight: 14
+    lineHeight: 14,
+    textAlign: "center"
   },
   mapSignalPreviewName: {
     color: "#ffffff",
@@ -1603,9 +1894,10 @@ const styles = StyleSheet.create({
     marginTop: 10
   },
   eventCounterPill: {
-    height: 30,
+    minHeight: 44,
     borderRadius: 999,
     paddingHorizontal: 10,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     backgroundColor: "#1c1c1e",
@@ -1707,7 +1999,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1
   },
   sheet: {
-    height: 320,
+    minHeight: 240,
+    maxHeight: "45%",
     backgroundColor: "#0a0a0a",
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
@@ -1715,6 +2008,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.05)",
     paddingHorizontal: 20,
     paddingTop: 16,
+  },
+  mapLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.35)"
   },
   addMarkerContainer: {
     marginBottom: 12,
